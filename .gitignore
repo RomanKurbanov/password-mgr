@@ -3,3 +3,4 @@ dist/
 .angular/
 *.js.map
 /.idea/
+.DS_Store
