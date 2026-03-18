@@ -1,0 +1,203 @@
+<div class="app-shell">
+  <header class="app-header">
+    <h1>Password Manager</h1>
+  </header>
+
+  <div class="app-body">
+    <!-- Left column: saved sets -->
+    <aside class="sidebar">
+      <button class="btn btn-new" (click)="newParam()">+ New</button>
+      <div class="saved-list">
+        @for (p of sortedParams(); track p.id) {
+          <div
+            class="saved-item"
+            [class.active]="p.id === selectedId()"
+            (click)="selectParam(p.id)"
+          >
+            <span class="saved-dot">●</span>
+            <div class="saved-item-body">
+              <span class="saved-name">{{ p.name || '(unnamed)' }}</span>
+              <span class="saved-meta">{{ formatUpdatedAt(p.updatedAt) }}</span>
+            </div>
+          </div>
+        }
+        @if (savedParams().length === 0) {
+          <p class="empty-hint">No saved sets</p>
+        }
+      </div>
+    </aside>
+
+    <!-- Right column: editor -->
+    <main class="editor">
+      <!-- Master secret row -->
+      <div class="master-row">
+        <label class="field-label" for="masterSecret">Master Secret</label>
+        <div class="input-group">
+          <input
+            id="masterSecret"
+            class="input master-input"
+            [type]="!supportsTextSecurity && !showMasterSecret() ? 'password' : 'text'"
+            [class.master-masked]="supportsTextSecurity && !showMasterSecret()"
+            [value]="masterSecret()"
+            (input)="masterSecret.set($any($event.target).value); onMasterSecretChange()"
+            placeholder="Enter master secret…"
+            [attr.autocomplete]="supportsTextSecurity ? 'off' : 'new-password'"
+            spellcheck="false"
+          />
+          <button
+            class="btn btn-icon"
+            (click)="showMasterSecret.set(!showMasterSecret())"
+            [title]="showMasterSecret() ? 'Hide' : 'Show'"
+          >{{ showMasterSecret() ? '🙈' : '👁' }}</button>
+          <button class="btn btn-icon" (click)="clearMasterSecret()" title="Clear">✕</button>
+        </div>
+        @if (secretWeak()) {
+          <span class="weak-secret-hint">⚠ Weak secret — use 12+ characters</span>
+        }
+      </div>
+
+      <hr class="divider" />
+
+      @if (editParams(); as params) {
+        <!-- Name -->
+        <div class="field-row">
+          <label class="field-label" for="name">Name</label>
+          <input
+            id="name"
+            class="input"
+            type="text"
+            [(ngModel)]="params.name"
+            (ngModelChange)="onParamChange()"
+            placeholder="e.g. Google Login"
+          />
+        </div>
+
+        <!-- Domain -->
+        <div class="field-row">
+          <label class="field-label" for="domain">Domain</label>
+          <input
+            id="domain"
+            class="input"
+            type="text"
+            [(ngModel)]="params.domain"
+            (ngModelChange)="onParamChange()"
+            placeholder="e.g. google.com"
+            autocomplete="off"
+          />
+        </div>
+
+        <!-- Username -->
+        <div class="field-row">
+          <label class="field-label" for="username">Username</label>
+          <input
+            id="username"
+            class="input"
+            type="text"
+            [(ngModel)]="params.username"
+            (ngModelChange)="onParamChange()"
+            placeholder="e.g. user@example.com"
+            autocomplete="off"
+          />
+        </div>
+
+        <!-- Counter -->
+        <div class="field-row">
+          <label class="field-label">Counter</label>
+          <div class="counter-group">
+            <button class="btn btn-counter" (click)="decrementCounter()" [disabled]="params.counter <= 1">−</button>
+            <span class="counter-value">{{ params.counter }}</span>
+            <button class="btn btn-counter" (click)="incrementCounter()">+</button>
+          </div>
+        </div>
+
+        <!-- Length -->
+        <div class="field-row">
+          <label class="field-label" for="length">Length: {{ params.length }}</label>
+          <input
+            id="length"
+            class="range-input"
+            type="range"
+            [min]="8"
+            [max]="64"
+            [(ngModel)]="params.length"
+            (ngModelChange)="onParamChange()"
+          />
+        </div>
+
+        <!-- Character sets -->
+        <div class="field-row charset-row">
+          <label class="field-label">Charset</label>
+          <div class="checkbox-group">
+            <label class="checkbox-label">
+              <input type="checkbox" [(ngModel)]="params.includeUppercase" (ngModelChange)="onParamChange()" />
+              Upper
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" [(ngModel)]="params.includeLowercase" (ngModelChange)="onParamChange()" />
+              Lower
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" [(ngModel)]="params.includeNumbers" (ngModelChange)="onParamChange()" />
+              Numbers
+            </label>
+          </div>
+        </div>
+
+        <!-- Symbols -->
+        <div class="field-row">
+          <label class="field-label" for="symbols">Symbols</label>
+          <input
+            id="symbols"
+            class="input"
+            type="text"
+            [(ngModel)]="params.symbols"
+            (ngModelChange)="onParamChange()"
+            placeholder="e.g. !@#$%^&*()"
+          />
+        </div>
+
+        <hr class="divider" />
+
+        <!-- Generated password output -->
+        <div class="output-row">
+          @if (generating()) {
+            <span class="generating-hint">⏳ Generating…</span>
+          } @else if (generatedPassword()) {
+            <div class="password-output-group">
+              <span class="password-output" [class.blurred]="!showPassword()">
+                {{ generatedPassword() }}
+              </span>
+              <button
+                class="btn btn-icon"
+                (click)="showPassword.set(!showPassword())"
+                [title]="showPassword() ? 'Hide password' : 'Show password'"
+              >{{ showPassword() ? '🙈' : '👁' }}</button>
+              <button class="btn btn-copy" (click)="copyPassword()">
+                {{ copySuccess() ? '✓ Copied' : 'Copy' }}
+              </button>
+              @if (copyError()) {
+                <span class="error-hint copy-error">✗ Copy failed</span>
+              }
+            </div>
+          } @else if (error()) {
+            <span class="error-hint">⚠ {{ error() }}</span>
+          } @else {
+            <span class="empty-hint">Enter master secret and domain to generate</span>
+          }
+        </div>
+
+        <!-- Action buttons -->
+        <div class="action-row">
+          <button class="btn btn-save" (click)="saveParam()">Save</button>
+          @if (selectedId()) {
+            <button class="btn btn-delete" (click)="deleteParam()">Delete</button>
+          }
+        </div>
+      } @else {
+        <div class="no-selection">
+          <p>Select a saved set or click <strong>+ New</strong> to get started.</p>
+        </div>
+      }
+    </main>
+  </div>
+</div>
