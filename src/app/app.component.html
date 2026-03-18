@@ -1,11 +1,14 @@
 <div class="app-shell">
   <header class="app-header">
     <h1>Password Manager</h1>
+    <button class="btn btn-sidebar-toggle" (click)="sidebarOpen.set(!sidebarOpen())">
+      {{ sidebarOpen() ? '✕' : '☰' }} History
+    </button>
   </header>
 
   <div class="app-body">
     <!-- Left column: saved sets -->
-    <aside class="sidebar">
+    <aside class="sidebar" [class.sidebar-open]="sidebarOpen()">
       <button class="btn btn-new" (click)="newParam()">+ New</button>
       <div class="saved-list">
         @for (p of sortedParams(); track p.id) {
@@ -22,7 +25,7 @@
           </div>
         }
         @if (savedParams().length === 0) {
-          <p class="empty-hint">No saved sets</p>
+          <p class="empty-hint">No saved history</p>
         }
       </div>
     </aside>

@@ -10,6 +10,9 @@
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   padding: 0.75rem 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 
   h1 {
     margin: 0;
@@ -18,6 +21,10 @@
     letter-spacing: 0.02em;
     color: var(--accent);
   }
+}
+
+.btn-sidebar-toggle {
+  display: none;
 }
 
 .app-body {
@@ -344,4 +351,43 @@
   justify-content: center;
   color: var(--text-faint);
   font-size: 0.9rem;
+}
+
+/* ── Mobile layout ───────────────────────────────── */
+@media (max-width: 600px) {
+  .btn-sidebar-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+  }
+
+  .app-body {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    overflow: hidden;
+    transition: max-height 0.25s ease, padding 0.2s ease;
+
+    &.sidebar-open {
+      max-height: 60vh;
+      padding-top: 0.75rem;
+      padding-bottom: 0.75rem;
+      overflow-y: auto;
+    }
+  }
+
+  .editor {
+    padding: 1rem;
+  }
+
+  .weak-secret-hint {
+    padding-left: 0;
+  }
 }

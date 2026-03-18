@@ -29,6 +29,7 @@ export class AppComponent implements OnInit, OnDestroy {
   readonly supportsTextSecurity = CSS.supports('-webkit-text-security', 'disc');
 
   // State signals
+  sidebarOpen = signal(false);
   masterSecret = signal('');
   showMasterSecret = signal(false);
   savedParams = signal<PasswordParams[]>([]);
@@ -107,6 +108,7 @@ export class AppComponent implements OnInit, OnDestroy {
 
   selectParam(id: string): void {
     this.selectedId.set(id);
+    this.sidebarOpen.set(false);
     const found = this.savedParams().find(p => p.id === id);
     if (found) {
       this.editParams.set({ ...found });
@@ -120,6 +122,7 @@ export class AppComponent implements OnInit, OnDestroy {
     const p = createDefaultParams();
     this.editParams.set(p);
     this.selectedId.set(null);
+    this.sidebarOpen.set(false);
     this.generatedPassword.set('');
     this.showPassword.set(false);
     this.error.set('');
