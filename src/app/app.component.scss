@@ -171,10 +171,52 @@
   }
 }
 
-.range-input {
-  flex: 1;
-  accent-color: var(--accent);
-  cursor: pointer;
+.length-row {
+  align-items: flex-start;
+  padding-top: 0.2rem;
+}
+
+.length-control {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.length-stepper {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.length-input {
+  width: 3.5rem;
+  flex: none;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  padding: 0.4rem 0.3rem;
+
+  /* hide browser spin buttons */
+  &::-webkit-inner-spin-button,
+  &::-webkit-outer-spin-button { appearance: none; }
+  appearance: textfield;
+}
+
+.length-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.btn-preset {
+  padding: 0.2rem 0.55rem;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+
+  &.active {
+    background: var(--accent-faint);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
 }
 
 .counter-group {

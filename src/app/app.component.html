@@ -114,17 +114,32 @@
         </div>
 
         <!-- Length -->
-        <div class="field-row">
-          <label class="field-label" for="length">Length: {{ params.length }}</label>
-          <input
-            id="length"
-            class="range-input"
-            type="range"
-            [min]="8"
-            [max]="64"
-            [(ngModel)]="params.length"
-            (ngModelChange)="onParamChange()"
-          />
+        <div class="field-row length-row">
+          <label class="field-label" for="length">Length</label>
+          <div class="length-control">
+            <div class="length-stepper">
+              <button class="btn btn-counter" (click)="setLength(params.length - 1)" [disabled]="params.length <= 8">−</button>
+              <input
+                id="length"
+                class="input length-input"
+                type="number"
+                [min]="8"
+                [max]="64"
+                [value]="params.length"
+                (change)="setLength(+$any($event.target).value)"
+              />
+              <button class="btn btn-counter" (click)="setLength(params.length + 1)" [disabled]="params.length >= 64">+</button>
+            </div>
+            <div class="length-presets">
+              @for (preset of lengthPresets; track preset) {
+                <button
+                  class="btn btn-preset"
+                  [class.active]="params.length === preset"
+                  (click)="setLength(preset)"
+                >{{ preset }}</button>
+              }
+            </div>
+          </div>
         </div>
 
         <!-- Character sets -->

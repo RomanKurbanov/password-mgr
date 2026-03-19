@@ -27,6 +27,7 @@ export class AppComponent implements OnInit, OnDestroy {
   private storage = inject(StorageService);
 
   readonly supportsTextSecurity = CSS.supports('-webkit-text-security', 'disc');
+  readonly lengthPresets = [12, 16, 20, 24, 32];
 
   // State signals
   sidebarOpen = signal(false);
@@ -168,6 +169,15 @@ export class AppComponent implements OnInit, OnDestroy {
       this.copyError.set(true);
       setTimeout(() => this.copyError.set(false), 3000);
     }
+  }
+
+  setLength(n: number): void {
+    const p = this.editParams();
+    if (!p) return;
+    const clamped = Math.min(64, Math.max(8, Number.isFinite(n) ? Math.round(n) : p.length));
+    if (clamped === p.length) return;
+    this.editParams.set({ ...p, length: clamped });
+    this.triggerRegenerate();
   }
 
   incrementCounter(): void {
