@@ -25,6 +25,8 @@ import { StorageService } from './services/storage.service';
 export class AppComponent implements OnInit, OnDestroy {
   private crypto = inject(CryptoService);
   private storage = inject(StorageService);
+  private readonly clipboardRetryAttempts = 5;
+  private readonly clipboardRetryDelayMs = 150;
 
   readonly supportsTextSecurity = CSS.supports('-webkit-text-security', 'disc');
   readonly lengthPresets = [12, 16, 20, 24, 32];
@@ -160,15 +162,23 @@ export class AppComponent implements OnInit, OnDestroy {
   async copyPassword(): Promise<void> {
     const pwd = this.generatedPassword();
     if (!pwd) return;
-    try {
-      await navigator.clipboard.writeText(pwd);
+
+    const copied = await this.writeClipboardWithRetry(pwd);
+
+    if (copied) {
+      this.copyError.set(false);
       this.copySuccess.set(true);
+      this.clearMasterSecret(false);
       setTimeout(() => this.copySuccess.set(false), 2000);
-      setTimeout(() => navigator.clipboard.writeText(''), 30000);
-    } catch {
-      this.copyError.set(true);
-      setTimeout(() => this.copyError.set(false), 3000);
+      setTimeout(() => {
+        void this.writeClipboardWithRetry('');
+      }, 30000);
+      return;
     }
+
+    this.copySuccess.set(false);
+    this.copyError.set(true);
+    setTimeout(() => this.copyError.set(false), 3000);
   }
 
   setLength(n: number): void {
@@ -194,10 +204,34 @@ export class AppComponent implements OnInit, OnDestroy {
     this.triggerRegenerate();
   }
 
-  clearMasterSecret(): void {
+  clearMasterSecret(clearGeneratedPassword = true): void {
     this.masterSecret.set('');
-    this.generatedPassword.set('');
     this.showMasterSecret.set(false);
+
+    if (clearGeneratedPassword) {
+      this.generatedPassword.set('');
+    }
+  }
+
+  private async writeClipboardWithRetry(text: string): Promise<boolean> {
+    for (let attempt = 1; attempt <= this.clipboardRetryAttempts; attempt += 1) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        if (attempt === this.clipboardRetryAttempts) {
+          return false;
+        }
+
+        await this.delay(this.clipboardRetryDelayMs);
+      }
+    }
+
+    return false;
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 
   onParamChange(): void {

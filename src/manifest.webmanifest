@@ -1,0 +1,16 @@
+{
+  "id": "/",
+  "name": "Password Manager",
+  "short_name": "PwdMgr",
+  "description": "Deterministic password manager that runs as a standalone installed web app.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone"],
+  "background_color": "#111827",
+  "theme_color": "#111827",
+  "lang": "en",
+  "orientation": "portrait",
+  "prefer_related_applications": false
+}
+
