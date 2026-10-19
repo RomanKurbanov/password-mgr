@@ -27,6 +27,13 @@ p { color: var(--text-muted); font-size: .8rem; line-height: 1.5; margin: .5rem 
 small { display: block; color: var(--text-muted); }
 .status { color: var(--accent); }
 .cancel { margin-top: .5rem; }
+.diagnostics { border-top: 1px solid var(--border); margin-top: .75rem; padding-top: .5rem; }
+.diagnostics-toggle { display: flex; align-items: center; gap: .5rem; }
+.diagnostics-report {
+  display: block; width: 100%; resize: vertical; border: 1px solid var(--border);
+  background: var(--input-bg); color: var(--text); border-radius: 4px; padding: .5rem;
+  font: .75rem/1.4 monospace;
+}
 @media (max-width: 600px) {
   .unlock-row label, .enroll-row label { width: 100%; }
   .input { max-width: none; min-width: 0; }

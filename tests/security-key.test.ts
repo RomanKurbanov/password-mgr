@@ -18,6 +18,7 @@ class FakeAuthenticator {
   readonly location = new URL('https://password.example');
   readonly creates: CredentialCreationOptions[] = [];
   readonly gets: CredentialRequestOptions[] = [];
+  readonly prfOutputs: Uint8Array[] = [];
   prfAvailable = true;
   getPrfAvailable = true;
   wrongPrf = false;
@@ -53,6 +54,7 @@ class FakeAuthenticator {
               const output = createHash('sha256')
                 .update(requestedId).update(new Uint8Array(salt))
                 .update(this.wrongPrf ? 'wrong-device-secret' : 'device-secret').digest();
+              this.prfOutputs.push(new Uint8Array(output));
               return this.credential(rawId, false, new Uint8Array(output));
             },
           },
@@ -352,4 +354,104 @@ test('key storage rejects duplicate identities and oversized collections without
   assert.throws(() => service.save(Array.from({ length: 33 }, () => existing)), /at most 32/i);
   assert.equal(authenticator.storage.getItem(storageKey), before);
   assert.equal(authenticator.storage.writes, writesBefore);
+});
+
+test('security-key operations do not collect diagnostics until explicitly enabled', async () => {
+  const authenticator = new FakeAuthenticator();
+  const service = authenticator.install();
+  assert.equal(service.diagnostics.enabled(), false);
+  const record = await enroll(service, 'private master', 'Private key label');
+  assert.equal(await service.unlock(record), 'private master');
+  authenticator.getError = new DOMException('private exception details', 'NotAllowedError');
+  await assert.rejects(service.unlock(record), /NotAllowedError/);
+  assert.deepEqual(service.diagnostics.entries(), []);
+  assert.equal(service.diagnostics.exportReport(), '');
+  assert.equal(authenticator.storage.writes, 0);
+});
+
+test('opt-in diagnostics capture failed ceremony phases and durations while excluding all secret material', async () => {
+  const authenticator = new FakeAuthenticator();
+  const service = authenticator.install();
+  const master = 'NEVER-EXPORT-this-master-🔑';
+  const keyLabel = 'NEVER-EXPORT-this-key-label';
+  const rawMessage = `NEVER-EXPORT-raw-browser-exception ${master} ${keyLabel}`;
+  service.diagnostics.setEnabled(true);
+
+  authenticator.createError = new DOMException(rawMessage, 'NotAllowedError');
+  await assert.rejects(service.beginEnrollment(keyLabel), /NotAllowedError/);
+  authenticator.createError = undefined;
+  const pending = await service.beginEnrollment(keyLabel);
+  authenticator.getError = new DOMException(rawMessage, 'NotAllowedError');
+  await assert.rejects(service.finishEnrollment(pending, master), /NotAllowedError/);
+  authenticator.getError = undefined;
+  const record = await service.finishEnrollment(pending, master);
+  authenticator.getError = new DOMException(rawMessage, 'NotAllowedError');
+  await assert.rejects(service.unlock(record), /NotAllowedError/);
+  authenticator.getError = undefined;
+  assert.equal(await service.unlock(record), master);
+
+  const exported = service.diagnostics.exportReport();
+  const report = JSON.parse(exported);
+  assert.equal(report.format, 'password-mgr-security-key-diagnostics');
+  assert.equal(report.version, 1);
+  assert.equal(report.entries.length, 6);
+  const failures = report.entries.filter((entry: any) => entry.status === 'failed');
+  assert.deepEqual(failures.map((entry: any) => [entry.phase, entry.requestKind, entry.error.name]), [
+    ['registration', 'create', 'NotAllowedError'],
+    ['setup', 'get', 'NotAllowedError'],
+    ['unlock', 'get', 'NotAllowedError'],
+  ]);
+  for (const entry of failures) {
+    assert.equal(entry.error.code, 0);
+    assert.equal(entry.error.aborted, false);
+  }
+  assert.deepEqual(report.entries.filter((entry: any) => entry.status === 'succeeded')
+    .map((entry: any) => entry.summary), [
+    'credential-registered', 'encryption-verified', 'master-unlocked',
+  ]);
+  for (const entry of report.entries) {
+    assert.ok(Number.isFinite(entry.elapsedMs) && entry.elapsedMs >= 0);
+    assert.notEqual(entry.status, 'pending');
+    assert.ok(entry.events.some((event: any) => event.name === 'request-options'));
+    for (const event of entry.events) {
+      assert.ok(Number.isFinite(event.elapsedMs) && event.elapsedMs >= 0);
+    }
+  }
+
+  const forbidden = [
+    master, keyLabel, rawMessage,
+    record.credentialId, record.prfSalt, record.hkdfSalt, record.iv, record.ciphertext,
+    pending.iv,
+    ...authenticator.prfOutputs.flatMap(bytes => [
+      Buffer.from(bytes).toString('base64url'),
+      Buffer.from(bytes).toString('base64'),
+      Buffer.from(bytes).toString('hex'),
+      JSON.stringify([...bytes]),
+    ]),
+  ];
+  for (const secret of forbidden) {
+    assert.equal(exported.includes(secret), false, 'diagnostics must omit private values');
+  }
+  assert.equal(authenticator.storage.writes, 0, 'diagnostics must remain in memory');
+  service.diagnostics.setEnabled(false);
+  assert.deepEqual(service.diagnostics.entries(), []);
+  assert.equal(service.diagnostics.exportReport(), '');
+});
+
+test('diagnostics identify a missing PRF result after the browser returned a credential', async () => {
+  const authenticator = new FakeAuthenticator();
+  const service = authenticator.install();
+  service.diagnostics.setEnabled(true);
+  const pending = await service.beginEnrollment('Key');
+  authenticator.getPrfAvailable = false;
+  await assert.rejects(service.finishEnrollment(pending, 'master'), /PRF/);
+  const report = JSON.parse(service.diagnostics.exportReport());
+  const failed = report.entries.at(-1);
+  assert.equal(failed.phase, 'setup');
+  assert.equal(failed.status, 'failed');
+  assert.equal(failed.error.name, 'Error');
+  assert.ok(failed.events.some((event: any) => event.name === 'credential-response'));
+  const prf = failed.events.find((event: any) => event.name === 'prf-result');
+  assert.deepEqual(prf.details, { resultPresent: false, resultLength: 0 });
+  assert.equal(authenticator.storage.writes, 0);
 });

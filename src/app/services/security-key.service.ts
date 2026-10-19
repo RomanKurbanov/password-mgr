@@ -7,20 +7,12 @@ import {
   parsePendingSecurityKeyEnrollment,
   parseSecurityKeyRecord,
 } from '../models/security-key.model';
+import { SecurityKeyDiagnosticsService } from './security-key-diagnostics.service';
 
 const STORAGE_KEY = 'password-mgr:security-keys:v1';
 const MAX_STORED_CHARACTERS = 1_000_000;
 const KEY_CONTEXT = 'password-mgr:security-key:v1:master-secret';
 const PRF_UNAVAILABLE = 'This key and browser did not provide WebAuthn PRF. Use a PRF-capable FIDO2 security key and a compatible browser. You can still type your master secret.';
-
-// TypeScript's DOM definitions do not yet include the WebAuthn PRF extension.
-interface PrfInputs extends AuthenticationExtensionsClientInputs {
-  prf: { eval?: { first: BufferSource } };
-}
-
-interface PrfOutputs extends AuthenticationExtensionsClientOutputs {
-  prf?: { enabled?: boolean; results?: { first?: ArrayBuffer | ArrayBufferView } };
-}
 
 function encodeBytes(bytes: Uint8Array): string {
   let binary = '';
@@ -28,11 +20,11 @@ function encodeBytes(bytes: Uint8Array): string {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-function decodeBytes(value: string): Uint8Array {
+function decodeBytes(value: string): Uint8Array<ArrayBuffer> {
   return Uint8Array.from(atob(value.replace(/-/g, '+').replace(/_/g, '/')), char => char.charCodeAt(0));
 }
 
-function randomBytes(length: number): Uint8Array {
+function randomBytes(length: number): Uint8Array<ArrayBuffer> {
   return crypto.getRandomValues(new Uint8Array(length));
 }
 
@@ -47,7 +39,7 @@ function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
   return difference === 0;
 }
 
-function authenticatedData(record: Pick<SecurityKeyRecord, 'version' | 'rpId' | 'credentialId' | 'prfSalt' | 'hkdfSalt'>): Uint8Array {
+function authenticatedData(record: Pick<SecurityKeyRecord, 'version' | 'rpId' | 'credentialId' | 'prfSalt' | 'hkdfSalt'>): Uint8Array<ArrayBuffer> {
   // Labels may change; the credential, scheme and both derivation inputs may not.
   return new TextEncoder().encode(JSON.stringify({
     context: KEY_CONTEXT,
@@ -119,6 +111,8 @@ function operationError(error: unknown, phase: OperationPhase, signal?: AbortSig
 
 @Injectable({ providedIn: 'root' })
 export class SecurityKeyService {
+  constructor(readonly diagnostics: SecurityKeyDiagnosticsService = new SecurityKeyDiagnosticsService()) {}
+
   isSupported(): boolean {
     return typeof window !== 'undefined' && window.isSecureContext &&
       typeof PublicKeyCredential !== 'undefined' && typeof navigator !== 'undefined' &&
@@ -159,6 +153,7 @@ export class SecurityKeyService {
   }
 
   async beginEnrollment(name: string, signal?: AbortSignal): Promise<PendingSecurityKeyEnrollment> {
+    const diagnostic = this.diagnostics.begin('registration', 'create');
     try {
       this.requireSupport();
       checkCancelled(signal);
@@ -167,6 +162,10 @@ export class SecurityKeyService {
         throw new Error('Give the security key a name of 1 to 80 characters.');
       }
       const rpId = window.location.hostname;
+      this.diagnostics.event(diagnostic, 'request-options', {
+        residentKey: 'required', userVerification: 'required',
+        authenticatorAttachment: 'cross-platform', extensions: ['prf'], algorithmIds: [-7, -257],
+      });
       const created = publicKeyCredential(await navigator.credentials.create({
         publicKey: {
           challenge: randomBytes(32),
@@ -181,24 +180,31 @@ export class SecurityKeyService {
           },
           attestation: 'none',
           timeout: 120_000,
-          extensions: { prf: {} } as PrfInputs,
+          extensions: { prf: {} },
         },
         signal,
       }));
+      this.diagnostics.event(diagnostic, 'credential-response', { attachment: created.authenticatorAttachment ?? null });
       checkCancelled(signal);
       const attestation = created.response as AuthenticatorAttestationResponse;
       if (typeof attestation.getAuthenticatorData !== 'function') {
         throw new Error('This browser cannot inspect security-key verification. Update it or use a compatible browser.');
       }
-      requireVerification(attestation.getAuthenticatorData());
-      if ((created.getClientExtensionResults() as PrfOutputs).prf?.enabled !== true) {
+      const authData = attestation.getAuthenticatorData();
+      this.diagnostics.event(diagnostic, 'verification', {
+        userVerified: new Uint8Array(authData).length >= 37 && (new Uint8Array(authData)[32] & 0x04) !== 0,
+      });
+      requireVerification(authData);
+      const prfEnabled = created.getClientExtensionResults().prf?.enabled === true;
+      this.diagnostics.event(diagnostic, 'prf-result', { enabled: prfEnabled });
+      if (!prfEnabled) {
         throw new Error(PRF_UNAVAILABLE);
       }
       const credentialId = new Uint8Array(created.rawId);
       if (credentialId.length === 0 || credentialId.length > 1024) {
         throw new Error('The security key returned an invalid credential ID.');
       }
-      return parsePendingSecurityKeyEnrollment({
+      const pending = parsePendingSecurityKeyEnrollment({
         version: 1 as const,
         credentialId: encodeBytes(credentialId),
         name: label,
@@ -208,15 +214,19 @@ export class SecurityKeyService {
         iv: encodeBytes(randomBytes(12)),
         createdAt: new Date().toISOString(),
       });
+      this.diagnostics.success(diagnostic, 'credential-registered');
+      return pending;
     } catch (error) {
+      this.diagnostics.fail(diagnostic, error, signal);
       throw operationError(error, 'registration', signal);
     }
   }
 
   async finishEnrollment(value: PendingSecurityKeyEnrollment, masterSecret: string, signal?: AbortSignal): Promise<SecurityKeyRecord> {
-    let plaintext: Uint8Array | undefined;
-    let prfOutput: Uint8Array | undefined;
-    let roundtrip: Uint8Array | undefined;
+    const diagnostic = this.diagnostics.begin('setup', 'get');
+    let plaintext: Uint8Array<ArrayBuffer> | undefined;
+    let prfOutput: Uint8Array<ArrayBuffer> | undefined;
+    let roundtrip: Uint8Array<ArrayBuffer> | undefined;
     try {
       this.requireSupport();
       checkCancelled(signal);
@@ -234,7 +244,7 @@ export class SecurityKeyService {
       const metadata = { ...pending, iv: encodeBytes(iv) };
       // No asynchronous work precedes this request: the caller's fresh button
       // gesture starts exactly one WebAuthn ceremony, independent of registration.
-      prfOutput = await this.evaluatePrf(decodeBytes(pending.credentialId), pending.rpId, decodeBytes(pending.prfSalt), signal);
+      prfOutput = await this.evaluatePrf(decodeBytes(pending.credentialId), pending.rpId, decodeBytes(pending.prfSalt), signal, diagnostic);
       const key = await this.deriveWrappingKey(prfOutput, decodeBytes(pending.hkdfSalt));
       checkCancelled(signal);
       const algorithm: AesGcmParams = { name: 'AES-GCM', iv, additionalData: authenticatedData(metadata), tagLength: 128 };
@@ -245,8 +255,12 @@ export class SecurityKeyService {
       if (!equalBytes(plaintext, roundtrip)) {
         throw new Error('The security-key encryption check failed. No key record was saved.');
       }
-      return parseSecurityKeyRecord({ ...metadata, ciphertext: encodeBytes(new Uint8Array(ciphertext)) });
+      const record = parseSecurityKeyRecord({ ...metadata, ciphertext: encodeBytes(new Uint8Array(ciphertext)) });
+      this.diagnostics.event(diagnostic, 'encryption-verified', { verified: true });
+      this.diagnostics.success(diagnostic, 'encryption-verified');
+      return record;
     } catch (error) {
+      this.diagnostics.fail(diagnostic, error, signal);
       throw operationError(error, 'setup', signal);
     } finally {
       plaintext?.fill(0);
@@ -256,8 +270,9 @@ export class SecurityKeyService {
   }
 
   async unlock(value: SecurityKeyRecord, signal?: AbortSignal): Promise<string> {
-    let prfOutput: Uint8Array | undefined;
-    let plaintext: Uint8Array | undefined;
+    const diagnostic = this.diagnostics.begin('unlock', 'get');
+    let prfOutput: Uint8Array<ArrayBuffer> | undefined;
+    let plaintext: Uint8Array<ArrayBuffer> | undefined;
     try {
       this.requireSupport();
       checkCancelled(signal);
@@ -265,7 +280,7 @@ export class SecurityKeyService {
       if (record.rpId !== window.location.hostname) {
         throw new Error(`This key was enrolled for ${record.rpId}. Open that hostname to unlock it, or type your master secret here.`);
       }
-      prfOutput = await this.evaluatePrf(decodeBytes(record.credentialId), record.rpId, decodeBytes(record.prfSalt), signal);
+      prfOutput = await this.evaluatePrf(decodeBytes(record.credentialId), record.rpId, decodeBytes(record.prfSalt), signal, diagnostic);
       const key = await this.deriveWrappingKey(prfOutput, decodeBytes(record.hkdfSalt));
       checkCancelled(signal);
       try {
@@ -281,8 +296,11 @@ export class SecurityKeyService {
       }
       checkCancelled(signal);
       // Preserve an initial U+FEFF, which the default UTF-8 decoder would strip.
-      return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(plaintext);
+      const secret = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(plaintext);
+      this.diagnostics.success(diagnostic, 'master-unlocked');
+      return secret;
     } catch (error) {
+      this.diagnostics.fail(diagnostic, error, signal);
       throw operationError(error, 'unlock', signal);
     } finally {
       prfOutput?.fill(0);
@@ -307,8 +325,9 @@ export class SecurityKeyService {
     return records;
   }
 
-  private async evaluatePrf(credentialId: Uint8Array, rpId: string, salt: Uint8Array, signal?: AbortSignal): Promise<Uint8Array> {
+  private async evaluatePrf(credentialId: Uint8Array<ArrayBuffer>, rpId: string, salt: Uint8Array<ArrayBuffer>, signal?: AbortSignal, diagnostic = 0): Promise<Uint8Array<ArrayBuffer>> {
     checkCancelled(signal);
+    this.diagnostics.event(diagnostic, 'request-options', { userVerification: 'required', extensions: ['prf'] });
     const credential = publicKeyCredential(await navigator.credentials.get({
       publicKey: {
         challenge: randomBytes(32),
@@ -316,22 +335,28 @@ export class SecurityKeyService {
         allowCredentials: [{ type: 'public-key', id: credentialId }],
         userVerification: 'required',
         timeout: 120_000,
-        extensions: { prf: { eval: { first: salt } } } as PrfInputs,
+        extensions: { prf: { eval: { first: salt } } },
       },
       signal,
     }));
+    this.diagnostics.event(diagnostic, 'credential-response', { attachment: credential.authenticatorAttachment ?? null });
     // This assertion transports a local PRF output. AES-GCM verifies the encrypted
     // master secret; there is no server authentication or assertion-signature check.
-    const result = (credential.getClientExtensionResults() as PrfOutputs).prf?.results?.first;
+    const result = credential.getClientExtensionResults().prf?.results?.first;
     let bytes: Uint8Array | undefined;
     if (result instanceof ArrayBuffer) bytes = new Uint8Array(result);
     else if (ArrayBuffer.isView(result)) bytes = new Uint8Array(result.buffer, result.byteOffset, result.byteLength);
     try {
+      this.diagnostics.event(diagnostic, 'prf-result', { resultPresent: !!bytes, resultLength: bytes?.length ?? 0 });
       checkCancelled(signal);
       if (!equalBytes(new Uint8Array(credential.rawId), credentialId)) {
         throw new Error('The browser returned a different security-key credential. Select the enrolled physical key and try again.');
       }
-      requireVerification((credential.response as AuthenticatorAssertionResponse).authenticatorData);
+      const authData = (credential.response as AuthenticatorAssertionResponse).authenticatorData;
+      this.diagnostics.event(diagnostic, 'verification', {
+        userVerified: new Uint8Array(authData).length >= 37 && (new Uint8Array(authData)[32] & 0x04) !== 0,
+      });
+      requireVerification(authData);
       if (!bytes || bytes.length !== 32) throw new Error(PRF_UNAVAILABLE);
       return bytes.slice();
     } finally {
@@ -339,7 +364,7 @@ export class SecurityKeyService {
     }
   }
 
-  private async deriveWrappingKey(prfOutput: Uint8Array, salt: Uint8Array): Promise<CryptoKey> {
+  private async deriveWrappingKey(prfOutput: Uint8Array<ArrayBuffer>, salt: Uint8Array<ArrayBuffer>): Promise<CryptoKey> {
     const material = await crypto.subtle.importKey('raw', prfOutput, 'HKDF', false, ['deriveKey']);
     return crypto.subtle.deriveKey({
       name: 'HKDF',

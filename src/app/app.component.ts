@@ -6,9 +6,9 @@ import {
   signal,
   computed,
   inject,
+  ChangeDetectionStrategy,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { CommonModule } from '@angular/common';
 import { Subject, Subscription } from 'rxjs';
 import { debounceTime } from 'rxjs/operators';
 
@@ -19,9 +19,9 @@ import { SecurityKeysComponent } from './security-keys.component';
 
 @Component({
   selector: 'app-root',
-  standalone: true,
-  imports: [CommonModule, FormsModule, SecurityKeysComponent],
+  imports: [FormsModule, SecurityKeysComponent],
   templateUrl: './app.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './app.component.scss',
 })
 export class AppComponent implements OnInit, OnDestroy {

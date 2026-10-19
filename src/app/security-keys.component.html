@@ -69,6 +69,27 @@
   </div>
   <p>Backups include readable site settings and encrypted master-secret copies. Import merges entries without replacing existing ones. A key needs this backup on a new browser, at the same domain.</p>
   <p>Remembering your master secret remains a recovery option. Key unlock does not add a required second factor.</p>
+
+  <div class="diagnostics">
+    <p><strong>Troubleshooting</strong> · Build {{ buildId }}</p>
+    <label class="diagnostics-toggle">
+      <input type="checkbox" [checked]="diagnostics.enabled()"
+        (change)="toggleDiagnostics($any($event.target).checked)" />
+      Enable temporary diagnostics
+    </label>
+    <p>Records browser and site information, request steps, timings, and error names in this tab's memory. Excludes passwords, PINs, credential IDs, and cryptographic secrets. Nothing is sent automatically. Turning this off or reloading clears the report.</p>
+    @if (diagnostics.enabled()) {
+      <div class="backup-row">
+        <button type="button" class="btn" (click)="copyDiagnostics()">Copy diagnostics</button>
+        <button type="button" class="btn" (click)="diagnostics.clear(); diagnosticCopyMessage.set('')">Clear diagnostics</button>
+      </div>
+      <textarea class="diagnostics-report" readonly rows="10" aria-label="Security-key diagnostics report"
+        [value]="diagnosticReport()"></textarea>
+      @if (diagnosticCopyMessage()) {
+        <p class="status" role="status">{{ diagnosticCopyMessage() }}</p>
+      }
+    }
+  </div>
 </details>
 
 @if (busy() && !pendingEnrollment()) {

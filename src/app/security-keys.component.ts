@@ -1,17 +1,17 @@
-import { CommonModule } from '@angular/common';
-import { Component, EventEmitter, Input, OnChanges, OnDestroy, OnInit, Output, SimpleChanges, inject, signal } from '@angular/core';
+import { Component, EventEmitter, Input, OnChanges, OnDestroy, OnInit, Output, SimpleChanges, computed, inject, signal, ChangeDetectionStrategy } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { PasswordParams } from './models/password-params.model';
 import { PendingSecurityKeyEnrollment, SecurityKeyRecord } from './models/security-key.model';
 import { createBackup, mergeBackup, parseBackup } from './services/backup';
 import { SecurityKeyService } from './services/security-key.service';
 import { StorageService } from './services/storage.service';
+import { APP_BUILD_ID } from './build-info';
 
 @Component({
   selector: 'app-security-keys',
-  standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [FormsModule],
   templateUrl: './security-keys.component.html',
+  changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './security-keys.component.scss',
 })
 export class SecurityKeysComponent implements OnInit, OnChanges, OnDestroy {
@@ -25,6 +25,14 @@ export class SecurityKeysComponent implements OnInit, OnChanges, OnDestroy {
   @Output() readonly lockRequested = new EventEmitter<void>();
 
   readonly supported = this.keyService.isSupported();
+  readonly buildId = APP_BUILD_ID;
+  readonly diagnostics = this.keyService.diagnostics;
+  readonly diagnosticReport = computed(() => {
+    this.diagnostics.entries();
+    this.diagnostics.enabled();
+    return this.diagnostics.exportReport();
+  });
+  readonly diagnosticCopyMessage = signal('');
   readonly hostname = window.location.hostname;
   readonly keys = signal<SecurityKeyRecord[]>([]);
   readonly selectedKeyId = signal('');
@@ -53,6 +61,22 @@ export class SecurityKeysComponent implements OnInit, OnChanges, OnDestroy {
 
   ngOnDestroy(): void {
     this.cancelOperation();
+    this.diagnostics.setEnabled(false);
+  }
+
+  toggleDiagnostics(enabled: boolean): void {
+    this.diagnostics.setEnabled(enabled);
+    this.diagnosticCopyMessage.set('');
+  }
+
+  async copyDiagnostics(): Promise<void> {
+    if (!this.diagnostics.enabled()) return;
+    try {
+      await navigator.clipboard.writeText(this.diagnosticReport());
+      this.diagnosticCopyMessage.set('Diagnostics copied. Turn off temporary diagnostics when troubleshooting is complete.');
+    } catch {
+      this.diagnosticCopyMessage.set('Could not copy. Select and copy the report below.');
+    }
   }
 
   keyId(key: SecurityKeyRecord): string {

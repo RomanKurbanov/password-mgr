@@ -33,6 +33,10 @@ A message saying the key/browser did not provide PRF means that operation did no
 
 For a site-access or hostname error, use HTTPS or localhost and the same hostname used for registration. Do not move between production, localhost, an IP address, or a different domain partway through setup.
 
+For temporary diagnostics, build and deploy the updated app, then use **Option–Command–R** in Safari to [reload from origin without cached resources](https://developer.apple.com/documentation/safari-technology-preview-release-notes/stp-release-27). Keep the site's saved data. Under **Security keys & backup**, confirm **Build key-debug-20261019-1**, select **Enable temporary diagnostics**, reproduce the failed step, and choose **Copy diagnostics**. If the marker is missing or the old generic error remains, confirm that the tab loaded the updated build before diagnosing the key.
+
+Diagnostics are off by default. They retain at most 50 requests with 16 events each, in memory only: browser user agent, origin (no path or query), secure context and user activation, request stages and timing, PRF presence/length, and error names/codes. They exclude secrets, credential IDs, and PRF bytes, and never write to storage, the network, or the console. Copying is an explicit action. Turn diagnostics off or reload to clear the in-memory report.
+
 ## Back up and recover
 
 Export a backup after saving settings or enrolling keys, and keep it somewhere safe. The JSON includes **plaintext site settings** (including domains and usernames), encrypted master-secret copies, and public credential metadata. It does not include a plaintext master secret, generated passwords, or the key's PRF secret. Treat the file as private because the site settings reveal accounts.
@@ -55,12 +59,16 @@ References: [Yubico's PRF implementation guide](https://developers.yubico.com/We
 
 ## Development
 
+Use Node.js 22.22.3 or newer within the 22.x release line. The `.nvmrc` file pins Node.js 22.23.3 for local development and CI. With nvm installed, select it before installing dependencies:
+
 ```sh
+nvm install
+nvm use
 npm ci
 npm start
 ```
 
-Use Node.js 22.x, one of the versions listed for Angular 18.2 in the [Angular compatibility table](https://angular.dev/reference/versions). Run the checks and production build with:
+Angular 22.2 uses TypeScript 6.0.x; see the [Angular compatibility table](https://angular.dev/reference/versions) for supported Node.js, TypeScript, and RxJS versions. Run the checks and production build with:
 
 ```sh
 npm test

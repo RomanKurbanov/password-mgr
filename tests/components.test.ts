@@ -6,6 +6,7 @@ import { AppComponent } from '../src/app/app.component';
 import { SecurityKeysComponent } from '../src/app/security-keys.component';
 import { CryptoService } from '../src/app/services/crypto.service';
 import { SecurityKeyService } from '../src/app/services/security-key.service';
+import { SecurityKeyDiagnosticsService } from '../src/app/services/security-key-diagnostics.service';
 import { StorageService } from '../src/app/services/storage.service';
 import { createBackup } from '../src/app/services/backup';
 import { PendingSecurityKeyEnrollment } from '../src/app/models/security-key.model';
@@ -48,6 +49,7 @@ function controls(keyOverrides: Record<string, unknown> = {}, storageOverrides: 
   environment();
   const writes: unknown[] = [];
   const keyService = {
+    diagnostics: new SecurityKeyDiagnosticsService(),
     isSupported: () => true,
     load: () => [securityKeyRecord()],
     save: (keys: unknown) => { writes.push(keys); },
@@ -62,7 +64,7 @@ function controls(keyOverrides: Record<string, unknown> = {}, storageOverrides: 
   ] });
   const component = runInInjectionContext(injector, () => new SecurityKeysComponent());
   component.ngOnInit();
-  return { component, writes };
+  return { component, writes, diagnostics: keyService.diagnostics };
 }
 
 test('manual generation and key unlock pass the identical secret and settings to the generator', async t => {
@@ -433,4 +435,55 @@ test('import merges the latest persisted settings instead of a stale tab snapsho
   await component.importBackup(input as unknown as HTMLInputElement);
   assert.deepEqual(storedKeys, [primary, otherTabKey]);
   assert.deepEqual(storedParams.map(item => item.id), ['site-1', 'other-tab-site', 'imported-site']);
+});
+
+test('diagnostic controls enable the shared recorder and disabling clears the report', () => {
+  const { component, writes, diagnostics } = controls();
+  assert.equal(diagnostics.enabled(), false);
+  component.toggleDiagnostics(true);
+  assert.equal(diagnostics.enabled(), true);
+  const operation = diagnostics.begin('unlock', 'get');
+  diagnostics.fail(operation, new DOMException('private browser error text', 'NotAllowedError'));
+  assert.equal(diagnostics.entries().length, 1);
+  assert.match(diagnostics.exportReport(), /NotAllowedError/);
+  component.diagnosticCopyMessage.set('old copy status');
+  component.toggleDiagnostics(false);
+  assert.equal(diagnostics.enabled(), false);
+  assert.deepEqual(diagnostics.entries(), []);
+  assert.equal(diagnostics.exportReport(), '');
+  assert.equal(component.diagnosticCopyMessage(), '');
+  assert.deepEqual(writes, []);
+});
+
+test('copying diagnostics writes only the sanitized report to the clipboard', async () => {
+  const { component, writes, diagnostics } = controls();
+  component.masterSecret = 'private-master-for-copy-test';
+  component.keyName = 'private-key-label-for-copy-test';
+  component.toggleDiagnostics(true);
+  const operation = diagnostics.begin('setup', 'get');
+  diagnostics.fail(operation, new DOMException(component.masterSecret + component.keyName, 'NotAllowedError'));
+  const report = diagnostics.exportReport();
+  const clipboard: string[] = [];
+  navigator.clipboard.writeText = async text => { clipboard.push(text); };
+  await component.copyDiagnostics();
+  assert.deepEqual(clipboard, [report]);
+  assert.equal(report.includes(component.masterSecret), false);
+  assert.equal(report.includes(component.keyName), false);
+  assert.match(component.diagnosticCopyMessage(), /copied/i);
+  assert.deepEqual(writes, []);
+});
+
+test('diagnostic clipboard failure gives an actionable message without writing keys or secrets', async () => {
+  const { component, writes, diagnostics } = controls();
+  component.masterSecret = 'private-master-never-to-persist';
+  component.toggleDiagnostics(true);
+  const operation = diagnostics.begin('unlock', 'get');
+  diagnostics.fail(operation, new DOMException('private exception contents', 'NotAllowedError'));
+  navigator.clipboard.writeText = async () => { throw new Error(component.masterSecret); };
+  await component.copyDiagnostics();
+  assert.ok(component.diagnosticCopyMessage().length > 0);
+  assert.equal(component.diagnosticCopyMessage().includes(component.masterSecret), false);
+  assert.equal(diagnostics.exportReport().includes(component.masterSecret), false);
+  assert.equal(diagnostics.entries().length, 1, 'the report remains available for manual copying');
+  assert.deepEqual(writes, []);
 });
