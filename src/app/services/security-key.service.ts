@@ -2,7 +2,9 @@ import { Injectable } from '@angular/core';
 import {
   MAX_MASTER_SECRET_BYTES,
   MAX_SECURITY_KEY_RECORDS,
+  PendingSecurityKeyEnrollment,
   SecurityKeyRecord,
+  parsePendingSecurityKeyEnrollment,
   parseSecurityKeyRecord,
 } from '../models/security-key.model';
 
@@ -77,23 +79,42 @@ function requireVerification(authenticatorData: ArrayBuffer): void {
   }
 }
 
-function operationError(error: unknown, signal?: AbortSignal): Error {
+type OperationPhase = 'registration' | 'setup' | 'unlock';
+
+function operationError(error: unknown, phase: OperationPhase, signal?: AbortSignal): Error {
+  const step = phase === 'registration' ? 'Key registration' : phase === 'setup' ? 'Encryption setup' : 'Key unlock';
   if (signal?.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
-    return new Error('Security-key operation cancelled. You can try again or type your master secret.');
+    return new Error(`${step} cancelled. You can try again or type your master secret.`);
   }
   if (error instanceof DOMException) {
     if (error.name === 'NotAllowedError') {
-      return new Error('The security-key request was cancelled, timed out, or was not allowed. Try again, choose your external key, and complete its PIN and touch prompts.');
+      const compatibility = ' Browser or key compatibility can also cause this error.';
+      if (phase === 'registration') {
+        return new Error('The browser did not complete key registration (NotAllowedError). Retry Register key, choose your external security key, and complete its PIN and touch prompts.' + compatibility);
+      }
+      if (phase === 'setup') {
+        return new Error('The browser did not complete encryption setup (NotAllowedError). Retry Finish setup with the same key; you do not need to register it again.' + compatibility);
+      }
+      return new Error('The browser did not complete key unlock (NotAllowedError). Retry Unlock with key and complete its PIN and touch prompts.' + compatibility);
     }
-    if (error.name === 'NotSupportedError') return new Error(PRF_UNAVAILABLE);
+    if (error.name === 'NotSupportedError') return new Error(`${step} failed: ${PRF_UNAVAILABLE}`);
     if (error.name === 'SecurityError') {
-      return new Error('The browser blocked security-key access for this site. Use HTTPS or localhost and the same hostname where the key was enrolled.');
+      return new Error(`${step} was blocked for this site. Use HTTPS or localhost and the same hostname where the key was enrolled.`);
     }
     if (error.name === 'InvalidStateError') {
-      return new Error('The security key could not create this credential. Try a different key or check its available credential storage.');
+      if (phase === 'registration') {
+        return new Error('Key registration failed: the security key could not create this credential. Try a different key or check its available credential storage.');
+      }
+      const retry = phase === 'setup' ? 'Finish setup' : 'Unlock with key';
+      return new Error(`${step} failed. Retry ${retry} with the same enrolled security key.`);
     }
+    // Do not surface browser-provided exception messages or other opaque details.
+    return new Error(`${step} failed in the browser. Retry this step with a compatible browser and security key, or type your master secret.`);
   }
-  return error instanceof Error ? error : new Error('Security-key operation failed. Please try again.');
+  if (error instanceof TypeError || error instanceof RangeError) {
+    return new Error(`${step} could not be completed. Retry this step with a compatible browser and security key, or type your master secret.`);
+  }
+  return error instanceof Error ? new Error(`${step} failed: ${error.message}`) : new Error(`${step} failed. Please try again.`);
 }
 
 @Injectable({ providedIn: 'root' })
@@ -137,10 +158,7 @@ export class SecurityKeyService {
     }
   }
 
-  async enroll(masterSecret: string, name: string, signal?: AbortSignal): Promise<SecurityKeyRecord> {
-    let plaintext: Uint8Array | undefined;
-    let prfOutput: Uint8Array | undefined;
-    let roundtrip: Uint8Array | undefined;
+  async beginEnrollment(name: string, signal?: AbortSignal): Promise<PendingSecurityKeyEnrollment> {
     try {
       this.requireSupport();
       checkCancelled(signal);
@@ -148,11 +166,6 @@ export class SecurityKeyService {
       if (!label || label.length > 80 || /[\u0000-\u001f\u007f]/.test(label)) {
         throw new Error('Give the security key a name of 1 to 80 characters.');
       }
-      plaintext = new TextEncoder().encode(masterSecret);
-      if (plaintext.length === 0 || plaintext.length > MAX_MASTER_SECRET_BYTES) {
-        throw new Error('Enter a master secret of up to 16 KiB before enrolling a security key.');
-      }
-
       const rpId = window.location.hostname;
       const created = publicKeyCredential(await navigator.credentials.create({
         publicKey: {
@@ -185,21 +198,44 @@ export class SecurityKeyService {
       if (credentialId.length === 0 || credentialId.length > 1024) {
         throw new Error('The security key returned an invalid credential ID.');
       }
-      const prfSalt = randomBytes(32);
-      const hkdfSalt = randomBytes(32);
-      const iv = randomBytes(12);
-      const metadata = {
+      return parsePendingSecurityKeyEnrollment({
         version: 1 as const,
         credentialId: encodeBytes(credentialId),
         name: label,
         rpId,
-        prfSalt: encodeBytes(prfSalt),
-        hkdfSalt: encodeBytes(hkdfSalt),
-        iv: encodeBytes(iv),
+        prfSalt: encodeBytes(randomBytes(32)),
+        hkdfSalt: encodeBytes(randomBytes(32)),
+        iv: encodeBytes(randomBytes(12)),
         createdAt: new Date().toISOString(),
-      };
-      prfOutput = await this.evaluatePrf(credentialId, rpId, prfSalt, signal);
-      const key = await this.deriveWrappingKey(prfOutput, hkdfSalt);
+      });
+    } catch (error) {
+      throw operationError(error, 'registration', signal);
+    }
+  }
+
+  async finishEnrollment(value: PendingSecurityKeyEnrollment, masterSecret: string, signal?: AbortSignal): Promise<SecurityKeyRecord> {
+    let plaintext: Uint8Array | undefined;
+    let prfOutput: Uint8Array | undefined;
+    let roundtrip: Uint8Array | undefined;
+    try {
+      this.requireSupport();
+      checkCancelled(signal);
+      const pending = parsePendingSecurityKeyEnrollment(value);
+      if (pending.rpId !== window.location.hostname) {
+        throw new Error(`This setup started for ${pending.rpId}. Open that hostname to finish it, or start a new registration here.`);
+      }
+      plaintext = new TextEncoder().encode(masterSecret);
+      if (plaintext.length === 0 || plaintext.length > MAX_MASTER_SECRET_BYTES) {
+        throw new Error('Enter a master secret of up to 16 KiB before finishing security-key setup.');
+      }
+      // Every attempt gets a fresh nonce, including retries after an encryption or
+      // save failure. Reusing public pending metadata must never reuse a GCM nonce.
+      const iv = randomBytes(12);
+      const metadata = { ...pending, iv: encodeBytes(iv) };
+      // No asynchronous work precedes this request: the caller's fresh button
+      // gesture starts exactly one WebAuthn ceremony, independent of registration.
+      prfOutput = await this.evaluatePrf(decodeBytes(pending.credentialId), pending.rpId, decodeBytes(pending.prfSalt), signal);
+      const key = await this.deriveWrappingKey(prfOutput, decodeBytes(pending.hkdfSalt));
       checkCancelled(signal);
       const algorithm: AesGcmParams = { name: 'AES-GCM', iv, additionalData: authenticatedData(metadata), tagLength: 128 };
       const ciphertext = await crypto.subtle.encrypt(algorithm, key, plaintext);
@@ -211,7 +247,7 @@ export class SecurityKeyService {
       }
       return parseSecurityKeyRecord({ ...metadata, ciphertext: encodeBytes(new Uint8Array(ciphertext)) });
     } catch (error) {
-      throw operationError(error, signal);
+      throw operationError(error, 'setup', signal);
     } finally {
       plaintext?.fill(0);
       prfOutput?.fill(0);
@@ -247,7 +283,7 @@ export class SecurityKeyService {
       // Preserve an initial U+FEFF, which the default UTF-8 decoder would strip.
       return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(plaintext);
     } catch (error) {
-      throw operationError(error, signal);
+      throw operationError(error, 'unlock', signal);
     } finally {
       prfOutput?.fill(0);
       plaintext?.fill(0);

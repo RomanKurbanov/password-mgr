@@ -10,6 +10,9 @@ export interface SecurityKeyRecord {
   createdAt: string;
 }
 
+/** In-memory setup state containing only public credential and encryption metadata. */
+export interface PendingSecurityKeyEnrollment extends Omit<SecurityKeyRecord, 'ciphertext'> {}
+
 export const MAX_SECURITY_KEY_RECORDS = 32;
 export const MAX_MASTER_SECRET_BYTES = 16_384;
 
@@ -43,8 +46,8 @@ function readBytes(value: unknown, field: string, minBytes: number, maxBytes: nu
   return encoded;
 }
 
-/** Validate and copy untrusted storage/import data without changing any cryptographic bytes. */
-export function parseSecurityKeyRecord(value: unknown): SecurityKeyRecord {
+/** Copy only public setup metadata; never retain a caller's extra or secret fields. */
+export function parsePendingSecurityKeyEnrollment(value: unknown): PendingSecurityKeyEnrollment {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return invalid('record');
   }
@@ -75,7 +78,16 @@ export function parseSecurityKeyRecord(value: unknown): SecurityKeyRecord {
     prfSalt: readBytes(input['prfSalt'], 'PRF salt', 32, 32),
     hkdfSalt: readBytes(input['hkdfSalt'], 'HKDF salt', 32, 32),
     iv: readBytes(input['iv'], 'encryption nonce', 12, 12),
-    ciphertext: readBytes(input['ciphertext'], 'encrypted master secret', 17, MAX_MASTER_SECRET_BYTES + 16),
     createdAt,
+  };
+}
+
+/** Validate and copy untrusted storage/import data without changing any cryptographic bytes. */
+export function parseSecurityKeyRecord(value: unknown): SecurityKeyRecord {
+  const metadata = parsePendingSecurityKeyEnrollment(value);
+  const input = value as Record<string, unknown>;
+  return {
+    ...metadata,
+    ciphertext: readBytes(input['ciphertext'], 'encrypted master secret', 17, MAX_MASTER_SECRET_BYTES + 16),
   };
 }

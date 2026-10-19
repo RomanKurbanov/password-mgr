@@ -8,6 +8,11 @@ import { MemoryStorage, passwordParams, securityKeyRecord } from './fixtures';
 
 const storageKey = 'password-mgr:security-keys:v1';
 
+async function enroll(service: SecurityKeyService, master: string, name: string, signal?: AbortSignal) {
+  const pending = await service.beginEnrollment(name, signal);
+  return service.finishEnrollment(pending, master, signal);
+}
+
 class FakeAuthenticator {
   readonly storage = new MemoryStorage();
   readonly location = new URL('https://password.example');
@@ -75,11 +80,98 @@ class FakeAuthenticator {
   }
 }
 
+test('registration and encryption are separate ceremonies with no automatic second prompt', async () => {
+  const authenticator = new FakeAuthenticator();
+  const service = authenticator.install();
+  const pending = await service.beginEnrollment(' My key ');
+
+  assert.equal(pending.name, 'My key');
+  assert.equal(pending.rpId, 'password.example');
+  assert.equal('ciphertext' in pending, false);
+  assert.equal(authenticator.creates.length, 1);
+  assert.equal(authenticator.gets.length, 0, 'registration must wait for a separate encryption action');
+  assert.equal(authenticator.storage.writes, 0);
+
+  const record = await service.finishEnrollment(pending, 'master remains in memory');
+  assert.equal(authenticator.creates.length, 1, 'encryption must use the registered credential');
+  assert.equal(authenticator.gets.length, 1);
+  assert.equal(authenticator.storage.writes, 0);
+  const { ciphertext, iv, ...metadata } = record;
+  const { iv: pendingIv, ...pendingMetadata } = pending;
+  assert.ok(ciphertext.length > 0);
+  assert.notEqual(iv, pendingIv, 'finishing must use a fresh encryption nonce');
+  assert.deepEqual(metadata, pendingMetadata);
+  assert.equal(await service.unlock(record), 'master remains in memory');
+});
+
+test('failed encryption can retry the pending credential without another registration', async () => {
+  const authenticator = new FakeAuthenticator();
+  const service = authenticator.install();
+  const existing = await enroll(service, 'existing master', 'Primary');
+  service.save([existing]);
+  const savedBefore = authenticator.storage.getItem(storageKey);
+  const writesBefore = authenticator.storage.writes;
+  const pending = await service.beginEnrollment('Spare');
+  const createCount = authenticator.creates.length;
+  const getCount = authenticator.gets.length;
+  authenticator.getError = new DOMException('Fresh user activation required', 'NotAllowedError');
+
+  await assert.rejects(service.finishEnrollment(pending, 'existing master'), /encryption setup.*NotAllowedError/i);
+  assert.equal(authenticator.creates.length, createCount);
+  assert.equal(authenticator.gets.length, getCount + 1);
+  assert.equal(authenticator.storage.getItem(storageKey), savedBefore);
+  assert.equal(authenticator.storage.writes, writesBefore);
+  assert.equal('ciphertext' in pending, false);
+
+  authenticator.getError = undefined;
+  const spare = await service.finishEnrollment(pending, 'existing master');
+  assert.equal(authenticator.creates.length, createCount);
+  assert.equal(authenticator.gets.length, getCount + 2);
+  assert.equal(spare.credentialId, pending.credentialId);
+  assert.equal(authenticator.storage.getItem(storageKey), savedBefore);
+  assert.equal(authenticator.storage.writes, writesBefore);
+  assert.equal(await service.unlock(spare), 'existing master');
+});
+
+test('reusing pending registration encrypts different secrets with independent nonces', async () => {
+  const authenticator = new FakeAuthenticator();
+  const service = authenticator.install();
+  const pending = await service.beginEnrollment('Key');
+  const snapshot = { ...pending };
+  const first = await service.finishEnrollment(pending, 'first master');
+  const second = await service.finishEnrollment(pending, 'second master');
+  assert.equal(authenticator.creates.length, 1);
+  assert.equal(authenticator.gets.length, 2);
+  assert.equal(first.credentialId, second.credentialId);
+  assert.notEqual(first.iv, second.iv);
+  assert.notEqual(first.ciphertext, second.ciphertext);
+  assert.deepEqual(pending, snapshot);
+  assert.equal(await service.unlock(first), 'first master');
+  assert.equal(await service.unlock(second), 'second master');
+});
+
+test('NotAllowed errors identify registration, encryption setup, and unlock separately', async () => {
+  const authenticator = new FakeAuthenticator();
+  const service = authenticator.install();
+  authenticator.createError = new DOMException('Browser rejected create', 'NotAllowedError');
+  await assert.rejects(service.beginEnrollment('Key'), /key registration.*NotAllowedError.*Register key/i);
+  assert.equal(authenticator.gets.length, 0);
+  authenticator.createError = undefined;
+  const pending = await service.beginEnrollment('Key');
+  authenticator.getError = new DOMException('Browser rejected get', 'NotAllowedError');
+  await assert.rejects(service.finishEnrollment(pending, 'master'), /encryption setup.*NotAllowedError.*Finish setup.*do not need to register/i);
+  authenticator.getError = undefined;
+  const record = await service.finishEnrollment(pending, 'master');
+  authenticator.getError = new DOMException('Browser rejected unlock', 'NotAllowedError');
+  await assert.rejects(service.unlock(record), /key unlock.*NotAllowedError.*Unlock with key/i);
+  assert.equal(authenticator.storage.writes, 0);
+});
+
 test('enrollment and unlock preserve exact master and existing generated password', async () => {
   const authenticator = new FakeAuthenticator();
   const service = authenticator.install();
   const master = '\uFEFF \tpässw🔑rd\n秘密 ';
-  const record = await service.enroll(master, ' My physical key ');
+  const record = await enroll(service, master, ' My physical key ');
   assert.equal(record.name, 'My physical key');
   assert.equal(record.rpId, 'password.example');
   assert.equal(JSON.stringify(record).includes(master), false);
@@ -116,8 +208,8 @@ test('spare keys have independent encrypted records for the same master secret',
   const authenticator = new FakeAuthenticator();
   const service = authenticator.install();
   const master = 'same master on both physical keys';
-  const primary = await service.enroll(master, 'Primary');
-  const spare = await service.enroll(master, 'Spare');
+  const primary = await enroll(service, master, 'Primary');
+  const spare = await enroll(service, master, 'Spare');
   assert.notEqual(primary.credentialId, spare.credentialId);
   assert.notEqual(primary.ciphertext, spare.ciphertext);
   assert.notEqual(primary.prfSalt, spare.prfSalt);
@@ -131,24 +223,24 @@ test('spare keys have independent encrypted records for the same master secret',
 test('unsupported PRF enrollment fails without changing existing local data', async () => {
   const authenticator = new FakeAuthenticator();
   const service = authenticator.install();
-  const existing = await service.enroll('existing master', 'Existing');
+  const existing = await enroll(service, 'existing master', 'Existing');
   service.save([existing]);
   const storedBefore = authenticator.storage.getItem(storageKey);
   const writesBefore = authenticator.storage.writes;
   authenticator.prfAvailable = false;
-  await assert.rejects(service.enroll('new master', 'Unsupported'), /PRF/);
+  await assert.rejects(enroll(service, 'new master', 'Unsupported'), /PRF/);
   assert.equal(authenticator.storage.getItem(storageKey), storedBefore);
   assert.equal(authenticator.storage.writes, writesBefore);
   authenticator.prfAvailable = true;
   authenticator.getPrfAvailable = false;
-  await assert.rejects(service.enroll('new master', 'Missing PRF output'), /PRF/);
+  await assert.rejects(enroll(service, 'new master', 'Missing PRF output'), /PRF/);
   assert.equal(authenticator.storage.writes, writesBefore);
 });
 
 test('wrong PRF output, ciphertext tampering, and authenticated metadata tampering fail closed', async () => {
   const authenticator = new FakeAuthenticator();
   const service = authenticator.install();
-  const record = await service.enroll('sensitive master', 'Key');
+  const record = await enroll(service, 'sensitive master', 'Key');
   authenticator.wrongPrf = true;
   await assert.rejects(service.unlock(record), /could not be opened/i);
   authenticator.wrongPrf = false;
@@ -163,13 +255,13 @@ test('wrong PRF output, ciphertext tampering, and authenticated metadata tamperi
 test('unlock rejects a different credential and missing user verification', async () => {
   const authenticator = new FakeAuthenticator();
   const service = authenticator.install();
-  const record = await service.enroll('master', 'Key');
+  const record = await enroll(service, 'master', 'Key');
   authenticator.wrongCredential = true;
   await assert.rejects(service.unlock(record), /different.*credential/i);
   authenticator.wrongCredential = false;
   authenticator.flags = 0x01;
   await assert.rejects(service.unlock(record), /user verification/i);
-  await assert.rejects(service.enroll('master', 'Unverified'), /user verification/i);
+  await assert.rejects(enroll(service, 'master', 'Unverified'), /user verification/i);
   authenticator.flags = 0x05;
   authenticator.attachment = 'platform';
   await assert.rejects(service.unlock(record), /external physical/i);
@@ -180,22 +272,22 @@ test('cancellation before and during ceremonies does not save an enrollment', as
   const service = authenticator.install();
   const before = new AbortController();
   before.abort();
-  await assert.rejects(service.enroll('master', 'Key', before.signal), /cancelled/i);
+  await assert.rejects(enroll(service, 'master', 'Key', before.signal), /cancelled/i);
   assert.equal(authenticator.creates.length, 0);
   const during = new AbortController();
   authenticator.onGet = () => during.abort();
-  await assert.rejects(service.enroll('master', 'Key', during.signal), /cancelled/i);
+  await assert.rejects(enroll(service, 'master', 'Key', during.signal), /cancelled/i);
   assert.equal(authenticator.storage.writes, 0);
   authenticator.onGet = undefined;
   authenticator.getError = new DOMException('User dismissed prompt', 'NotAllowedError');
-  await assert.rejects(service.enroll('master', 'Key'), /cancelled.*timed out/i);
+  await assert.rejects(enroll(service, 'master', 'Key'), /encryption setup.*NotAllowedError/i);
   assert.equal(authenticator.storage.writes, 0);
 });
 
 test('a backup enrolled for another hostname is rejected before a key prompt', async () => {
   const authenticator = new FakeAuthenticator();
   const service = authenticator.install();
-  const record = await service.enroll('master', 'Key');
+  const record = await enroll(service, 'master', 'Key');
   const getCount = authenticator.gets.length;
   authenticator.location.hostname = 'different.example';
   await assert.rejects(service.unlock(record), /enrolled for password\.example/i);
@@ -222,14 +314,14 @@ test('browser capability detection keeps unsupported contexts out of key ceremon
   assert.equal(service.isSupported(), true);
   (globalThis as any).window.isSecureContext = false;
   assert.equal(service.isSupported(), false);
-  await assert.rejects(service.enroll('master', 'Key'), /HTTPS or localhost/i);
+  await assert.rejects(enroll(service, 'master', 'Key'), /HTTPS or localhost/i);
   assert.equal(authenticator.creates.length, 0);
 });
 
 test('enrollment refuses an encrypted record if the verification decrypt does not match', async () => {
   const authenticator = new FakeAuthenticator();
   const service = authenticator.install();
-  const existing = await service.enroll('existing master', 'Primary');
+  const existing = await enroll(service, 'existing master', 'Primary');
   service.save([existing]);
   const before = authenticator.storage.getItem(storageKey);
   const writesBefore = authenticator.storage.writes;
@@ -239,7 +331,7 @@ test('enrollment refuses an encrypted record if the verification decrypt does no
     value: async () => new TextEncoder().encode('corrupt verification result').buffer,
   });
   try {
-    await assert.rejects(service.enroll('existing master', 'Spare'), /encryption check failed/i);
+    await assert.rejects(enroll(service, 'existing master', 'Spare'), /encryption check failed/i);
   } finally {
     if (descriptor) Object.defineProperty(crypto.subtle, 'decrypt', descriptor);
     else delete (crypto.subtle as any).decrypt;

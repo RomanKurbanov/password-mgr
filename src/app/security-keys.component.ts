@@ -2,7 +2,7 @@ import { CommonModule } from '@angular/common';
 import { Component, EventEmitter, Input, OnChanges, OnDestroy, OnInit, Output, SimpleChanges, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { PasswordParams } from './models/password-params.model';
-import { SecurityKeyRecord } from './models/security-key.model';
+import { PendingSecurityKeyEnrollment, SecurityKeyRecord } from './models/security-key.model';
 import { createBackup, mergeBackup, parseBackup } from './services/backup';
 import { SecurityKeyService } from './services/security-key.service';
 import { StorageService } from './services/storage.service';
@@ -28,7 +28,8 @@ export class SecurityKeysComponent implements OnInit, OnChanges, OnDestroy {
   readonly hostname = window.location.hostname;
   readonly keys = signal<SecurityKeyRecord[]>([]);
   readonly selectedKeyId = signal('');
-  readonly busy = signal<'enroll' | 'unlock' | 'import' | null>(null);
+  readonly busy = signal<'enroll' | 'finish' | 'unlock' | 'import' | null>(null);
+  readonly pendingEnrollment = signal<PendingSecurityKeyEnrollment | null>(null);
   readonly error = signal('');
   readonly message = signal('');
   readonly storageError = signal('');
@@ -63,6 +64,13 @@ export class SecurityKeysComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   cancelOperation(): void {
+    this.stopOperation();
+    this.pendingEnrollment.set(null);
+    this.message.set('');
+    this.error.set('');
+  }
+
+  private stopOperation(): void {
     this.operation++;
     this.controller?.abort();
     this.controller = null;
@@ -70,15 +78,33 @@ export class SecurityKeysComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   async enroll(): Promise<void> {
-    if (this.busy() || this.storageError() || !this.masterSecret || !this.supported) return;
+    if (this.busy() || this.pendingEnrollment() || this.storageError() || !this.masterSecret || !this.supported) return;
     const operation = this.beginOperation('enroll');
     try {
-      const key = await this.keyService.enroll(this.masterSecret, this.keyName, this.controller!.signal);
+      const pending = await this.keyService.beginEnrollment(this.keyName, this.controller!.signal);
+      if (operation !== this.operation) return;
+      this.pendingEnrollment.set(pending);
+      this.message.set('Registration completed. Click Finish setup to encrypt and verify your master secret with this key.');
+    } catch (error) {
+      if (operation === this.operation) this.error.set(this.errorMessage(error));
+    } finally {
+      this.finishOperation(operation);
+    }
+  }
+
+  async finishEnrollment(): Promise<void> {
+    const pending = this.pendingEnrollment();
+    if (!pending || this.busy() || this.storageError() || !this.masterSecret || !this.supported) return;
+    // A separate click gives this WebAuthn request its own user activation.
+    const operation = this.beginOperation('finish');
+    try {
+      const key = await this.keyService.finishEnrollment(pending, this.masterSecret, this.controller!.signal);
       if (operation !== this.operation) return;
       const keys = [...this.keyService.load(), key];
       this.keyService.save(keys);
       this.setKeys(keys);
       this.selectedKeyId.set(this.keyId(key));
+      this.pendingEnrollment.set(null);
       this.keyName = '';
       this.message.set('Key registered and encryption verified. Export a backup before relying on key unlock.');
     } catch (error) {
@@ -90,7 +116,7 @@ export class SecurityKeysComponent implements OnInit, OnChanges, OnDestroy {
 
   async unlock(): Promise<void> {
     const key = this.selectedKey();
-    if (!key || this.busy() || !this.supported || key.rpId !== this.hostname) return;
+    if (!key || this.busy() || this.pendingEnrollment() || !this.supported || key.rpId !== this.hostname) return;
     const operation = this.beginOperation('unlock');
     try {
       const secret = await this.keyService.unlock(key, this.controller!.signal);
@@ -105,7 +131,7 @@ export class SecurityKeysComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   removeKey(key: SecurityKeyRecord): void {
-    if (this.busy() || this.storageError()) return;
+    if (this.busy() || this.pendingEnrollment() || this.storageError()) return;
     try {
       const keys = this.keyService.load().filter(item => this.keyId(item) !== this.keyId(key));
       this.keyService.save(keys);
@@ -120,7 +146,7 @@ export class SecurityKeysComponent implements OnInit, OnChanges, OnDestroy {
   }
 
   exportBackup(): void {
-    if (this.busy() || this.storageError()) return;
+    if (this.busy() || this.pendingEnrollment() || this.storageError()) return;
     try {
       const data = createBackup(this.storage.load(), this.keyService.load());
       const url = URL.createObjectURL(new Blob([data], { type: 'application/json' }));
@@ -138,7 +164,7 @@ export class SecurityKeysComponent implements OnInit, OnChanges, OnDestroy {
 
   async importBackup(input: HTMLInputElement): Promise<void> {
     const file = input.files?.[0];
-    if (!file || this.busy() || this.storageError()) return;
+    if (!file || this.busy() || this.pendingEnrollment() || this.storageError()) return;
     const operation = this.beginOperation('import');
     try {
       if (file.size > 1_048_576) throw new Error('Backup is too large (maximum 1 MB).');
@@ -167,8 +193,8 @@ export class SecurityKeysComponent implements OnInit, OnChanges, OnDestroy {
     }
   }
 
-  private beginOperation(kind: 'enroll' | 'unlock' | 'import'): number {
-    this.cancelOperation();
+  private beginOperation(kind: 'enroll' | 'finish' | 'unlock' | 'import'): number {
+    this.stopOperation();
     this.controller = new AbortController();
     this.busy.set(kind);
     this.error.set('');

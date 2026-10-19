@@ -8,12 +8,18 @@ import { CryptoService } from '../src/app/services/crypto.service';
 import { SecurityKeyService } from '../src/app/services/security-key.service';
 import { StorageService } from '../src/app/services/storage.service';
 import { createBackup } from '../src/app/services/backup';
+import { PendingSecurityKeyEnrollment } from '../src/app/models/security-key.model';
 import { passwordParams, securityKeyRecord } from './fixtures';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>(done => { resolve = done; });
   return { promise, resolve };
+}
+
+function pendingEnrollment(overrides: Partial<PendingSecurityKeyEnrollment> = {}): PendingSecurityKeyEnrollment {
+  const { ciphertext, ...pending } = securityKeyRecord(overrides);
+  return pending;
 }
 
 function environment() {
@@ -45,6 +51,8 @@ function controls(keyOverrides: Record<string, unknown> = {}, storageOverrides: 
     isSupported: () => true,
     load: () => [securityKeyRecord()],
     save: (keys: unknown) => { writes.push(keys); },
+    beginEnrollment: async () => pendingEnrollment(),
+    finishEnrollment: async () => securityKeyRecord(),
     ...keyOverrides,
   };
   const storage = { load: () => [], save: () => {}, ...storageOverrides };
@@ -208,13 +216,13 @@ test('cancelled unlock cannot emit a late decrypted secret', async () => {
 });
 
 test('editing or clearing the master cancels pending enrollment without saving', async () => {
-  const pending = deferred<ReturnType<typeof securityKeyRecord>>();
-  const { component, writes } = controls({ enroll: () => pending.promise });
+  const pending = deferred<PendingSecurityKeyEnrollment>();
+  const { component, writes } = controls({ beginEnrollment: () => pending.promise });
   component.masterSecret = 'master';
   component.keyName = 'Spare';
   const run = component.enroll();
   component.ngOnChanges({ resetVersion: new SimpleChange(0, 1, false) });
-  pending.resolve(securityKeyRecord());
+  pending.resolve(pendingEnrollment());
   await run;
   assert.deepEqual(writes, []);
 });
@@ -234,12 +242,13 @@ test('destroyed controls discard late unlock results', async () => {
 test('failed enrollment persistence leaves the previous key list intact', async () => {
   const original = securityKeyRecord();
   const { component } = controls({
-    enroll: async () => securityKeyRecord({ name: 'Spare', credentialId: 'Ag' }),
+    finishEnrollment: async () => securityKeyRecord({ name: 'Spare', credentialId: 'Ag' }),
     save: () => { throw new Error('storage is full'); },
   });
   component.masterSecret = 'master';
   component.keyName = 'Spare';
   await component.enroll();
+  await component.finishEnrollment();
   assert.deepEqual(component.keys(), [original]);
   assert.match(component.error(), /storage is full/);
 });
@@ -291,16 +300,105 @@ test('enrollment preserves keys saved by another tab while the browser prompt wa
   const { component } = controls({
     load: () => stored,
     save: (keys: typeof stored) => { stored = keys; },
-    enroll: () => pending.promise,
+    beginEnrollment: async () => pendingEnrollment({ credentialId: added.credentialId }),
+    finishEnrollment: () => pending.promise,
   });
   component.masterSecret = 'master';
   component.keyName = 'New key';
-  const run = component.enroll();
+  await component.enroll();
+  const run = component.finishEnrollment();
   stored = [primary, otherTab];
   pending.resolve(added);
   await run;
   assert.deepEqual(stored, [primary, otherTab, added]);
   assert.deepEqual(component.keys(), stored);
+});
+
+test('registration waits for a separate Finish setup action before encryption or persistence', async () => {
+  let registrationCalls = 0;
+  let finishCalls = 0;
+  const added = securityKeyRecord({ credentialId: 'Ag', name: 'Spare' });
+  const { component, writes } = controls({
+    beginEnrollment: async () => {
+      registrationCalls++;
+      return pendingEnrollment({ credentialId: added.credentialId });
+    },
+    finishEnrollment: async () => { finishCalls++; return added; },
+  });
+  component.masterSecret = 'original master';
+  component.keyName = 'Spare';
+  await component.enroll();
+  assert.equal(registrationCalls, 1);
+  assert.equal(finishCalls, 0);
+  assert.deepEqual(writes, []);
+  assert.ok(component.pendingEnrollment());
+  assert.equal(component.busy(), null);
+  await component.finishEnrollment();
+  assert.equal(finishCalls, 1);
+  assert.equal(writes.length, 1);
+  assert.equal(component.pendingEnrollment(), null);
+});
+
+test('failed Finish setup can retry without registering another credential', async () => {
+  let registrationCalls = 0;
+  let finishCalls = 0;
+  const added = securityKeyRecord({ credentialId: 'Ag' });
+  const { component, writes } = controls({
+    beginEnrollment: async () => {
+      registrationCalls++;
+      return pendingEnrollment({ credentialId: added.credentialId });
+    },
+    finishEnrollment: async () => {
+      if (++finishCalls === 1) throw new Error('Encryption setup: NotAllowedError');
+      return added;
+    },
+  });
+  component.masterSecret = 'original master';
+  component.keyName = 'Spare';
+  await component.enroll();
+  const pending = component.pendingEnrollment();
+  await component.finishEnrollment();
+  assert.match(component.error(), /Encryption setup/);
+  assert.equal(component.pendingEnrollment(), pending);
+  assert.deepEqual(writes, []);
+  await component.finishEnrollment();
+  assert.equal(registrationCalls, 1);
+  assert.equal(finishCalls, 2);
+  assert.equal(writes.length, 1);
+  assert.equal(component.error(), '');
+});
+
+test('master-secret reset discards a registered pending credential and prevents finishing', async () => {
+  let finishCalls = 0;
+  const { component, writes } = controls({ finishEnrollment: async () => {
+    finishCalls++;
+    return securityKeyRecord();
+  } });
+  component.masterSecret = 'master';
+  component.keyName = 'Spare';
+  await component.enroll();
+  assert.ok(component.pendingEnrollment());
+  component.ngOnChanges({ resetVersion: new SimpleChange(0, 1, false) });
+  await component.finishEnrollment();
+  assert.equal(component.pendingEnrollment(), null);
+  assert.equal(finishCalls, 0);
+  assert.deepEqual(writes, []);
+});
+
+test('cancelling a pending finish discards late encryption and clears stale error messages', async () => {
+  const pending = deferred<ReturnType<typeof securityKeyRecord>>();
+  const { component, writes } = controls({ finishEnrollment: () => pending.promise });
+  component.masterSecret = 'master';
+  component.keyName = 'Spare';
+  await component.enroll();
+  const run = component.finishEnrollment();
+  component.error.set('Retry Finish setup');
+  component.cancelOperation();
+  pending.resolve(securityKeyRecord({ credentialId: 'Ag' }));
+  await run;
+  assert.equal(component.pendingEnrollment(), null);
+  assert.equal(component.error(), '');
+  assert.deepEqual(writes, []);
 });
 
 test('removing a key preserves records added by another tab', () => {

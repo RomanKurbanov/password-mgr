@@ -13,13 +13,25 @@ The existing password-generation algorithm and manual master-secret entry are un
 Use a FIDO2 security key with WebAuthn PRF (`hmac-secret`) support, such as a compatible YubiKey, and a browser/OS combination that supports PRF for external keys. FIDO2 support alone does not guarantee PRF compatibility. Serve the app over HTTPS or use `http://localhost` for local development.
 
 1. Enter the **exact existing master secret**, including spaces and capitalization. The app cannot verify it against a remote account; enrolling a different secret produces different passwords.
-2. Give the key a recognizable label and start registration in the security-key controls. Complete the browser's key registration prompt.
-3. Complete the separate encryption/verification step and its browser prompt. Enrollment requires two interactions so PRF evaluation works with keys that cannot return PRF output during registration. The app verifies decryption before saving the encrypted record.
+2. Give the key a recognizable label and click **Register key**. Complete the browser's key registration prompt. This creates the credential; it does not yet save an encrypted master-secret copy.
+3. Click **Finish setup**, keeping the same physical key available, and complete the next browser prompt. This separate click starts PRF evaluation and encryption. The app verifies decryption before saving the encrypted record. If this step fails, retry **Finish setup** to reuse the pending credential rather than registering another one.
 4. Clear the master-secret field. To use it again, select the enrolled key and choose its unlock action, then follow the browser's PIN/touch or biometric prompt.
+
+Between registration and **Finish setup**, the pending credential metadata stays only in this page's memory. Cancelling setup, editing or clearing the master secret, or leaving the page discards that pending state. Start registration again if you discard it. Cancelling does not remove a credential that was already created on the physical key.
 
 The browser obtains a repeatable PRF secret from the credential. HKDF-SHA-256 derives an AES-256-GCM key, which encrypts the original master secret with a fresh nonce. Only encrypted master-secret copies and public credential metadata are saved. The decrypted secret exists temporarily in memory. Copying a password clears it; key-unlocked sessions also lock automatically after five minutes. Use the lock/clear control to end a session sooner. Removing a key's saved record only removes its encrypted copy from this browser; it does not erase credentials on the physical key.
 
 Enroll a spare physical key using the **same exact master secret**. Each key has its own encrypted copy and can unlock the same generator inputs independently.
+
+## If a key prompt fails
+
+The app identifies whether the failure happened during registration, finishing setup, or unlocking. A browser `NotAllowedError` can mean cancellation, a timeout, an unavailable credential, or a browser restriction; it does not by itself establish that PRF is unsupported. The [WebAuthn request exception documentation](https://www.w3.org/TR/webauthn-3/#sctn-getAssertion) describes this error as covering multiple causes.
+
+If registration completed and **Finish setup** fails, keep the registered key connected, select that external key in the browser prompt, and retry **Finish setup**. No encrypted record is saved until this step succeeds. The two separate app clicks give each browser request a fresh user action, which addresses a possible cause of failures in Safari's [user-gesture handling](https://developers.yubico.com/WebAuthn/Concepts/Handle_WebKit_User_Gesture.html). The error alone cannot confirm that this caused a previous failure.
+
+A message saying the key/browser did not provide PRF means that operation did not return the required extension output. Check the exact key model and firmware, browser, operating system, and USB/NFC connection against [Yubico's PRF guidance](https://developers.yubico.com/WebAuthn/Concepts/PRF_Extension/Developers_Guide_to_PRF.html). Registration support and PRF evaluation support are separate requirements. Continue using manual master-secret entry if the combination is incompatible.
+
+For a site-access or hostname error, use HTTPS or localhost and the same hostname used for registration. Do not move between production, localhost, an IP address, or a different domain partway through setup.
 
 ## Back up and recover
 
