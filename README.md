@@ -6,7 +6,7 @@ A frontend-only, deterministic password generator built with Angular. Your maste
 
 Enter your master secret, then select a saved set or choose **+ New** and enter the site settings. Passwords regenerate as you edit. **Save** keeps the settings, without saving a plaintext master secret or generated password. **Copy** copies the password and then clears both the master secret and generated password from the app. A failed copy leaves them available for retry. The app does not automatically overwrite the clipboard; clear it yourself when finished, and consider your device’s clipboard history or sync settings.
 
-Use a long, independently generated master secret or a passphrase made from randomly selected words. Length alone does not establish strength. Keep your exact existing secret to regenerate existing passwords; changing it changes those passwords.
+Use a long, independently generated master secret or a passphrase made from randomly selected words.
 
 Both manual and key-unlocked sessions lock when leaving the page. Manual entry also locks after five minutes without keyboard or pointer activity. Key-unlocked sessions have a five-minute maximum even with activity. On returning to a suspended tab, the app checks elapsed time before allowing more use.
 
