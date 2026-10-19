@@ -137,6 +137,15 @@
   }
 }
 
+.key-session {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  color: var(--accent);
+  font-size: 0.8rem;
+}
+
 .field-row {
   display: flex;
   align-items: center;

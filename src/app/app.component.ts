@@ -2,6 +2,7 @@ import {
   Component,
   OnInit,
   OnDestroy,
+  ViewChild,
   signal,
   computed,
   inject,
@@ -14,11 +15,12 @@ import { debounceTime } from 'rxjs/operators';
 import { PasswordParams, createDefaultParams } from './models/password-params.model';
 import { CryptoService } from './services/crypto.service';
 import { StorageService } from './services/storage.service';
+import { SecurityKeysComponent } from './security-keys.component';
 
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, SecurityKeysComponent],
   templateUrl: './app.component.html',
   styleUrl: './app.component.scss',
 })
@@ -27,6 +29,7 @@ export class AppComponent implements OnInit, OnDestroy {
   private storage = inject(StorageService);
   private readonly clipboardRetryAttempts = 5;
   private readonly clipboardRetryDelayMs = 150;
+  @ViewChild(SecurityKeysComponent) private keyControls?: SecurityKeysComponent;
 
   readonly supportsTextSecurity = CSS.supports('-webkit-text-security', 'disc');
   readonly lengthPresets = [12, 16, 20, 24, 32];
@@ -43,6 +46,8 @@ export class AppComponent implements OnInit, OnDestroy {
   error = signal('');
   copySuccess = signal(false);
   copyError = signal(false);
+  keyUnlocked = signal(false);
+  securityKeyResetVersion = signal(0);
 
   // Current editing params (null = nothing selected)
   editParams = signal<PasswordParams | null>(null);
@@ -66,9 +71,17 @@ export class AppComponent implements OnInit, OnDestroy {
   // Debounce subject
   private regenerate$ = new Subject<void>();
   private sub = new Subscription();
+  private generationVersion = 0;
+  private secretVersion = 0;
+  private keyLockTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly onPageHide = (): void => {
+    if (this.keyUnlocked()) this.clearMasterSecret();
+    else this.cancelSecurityKeyOperation();
+  };
 
   ngOnInit(): void {
     this.savedParams.set(this.storage.load());
+    window.addEventListener('pagehide', this.onPageHide);
 
     this.sub.add(
       this.regenerate$.pipe(debounceTime(500)).subscribe(() => {
@@ -79,20 +92,27 @@ export class AppComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.sub.unsubscribe();
+    window.removeEventListener('pagehide', this.onPageHide);
+    this.clearMasterSecret();
   }
 
   // Called whenever any relevant input changes
   triggerRegenerate(): void {
+    this.generationVersion++;
+    this.generating.set(false);
     this.generatedPassword.set('');
     this.error.set('');
     this.regenerate$.next();
   }
 
   private async doGenerate(): Promise<void> {
+    const version = ++this.generationVersion;
     const secret = this.masterSecret();
-    const params = this.editParams();
+    const current = this.editParams();
+    const params = current ? { ...current } : null;
     if (!secret || !params || !params.domain) {
       this.generatedPassword.set('');
+      this.generating.set(false);
       return;
     }
 
@@ -100,12 +120,14 @@ export class AppComponent implements OnInit, OnDestroy {
     this.error.set('');
     try {
       const pwd = await this.crypto.generatePassword(secret, params);
-      this.generatedPassword.set(pwd);
+      if (version === this.generationVersion) this.generatedPassword.set(pwd);
     } catch (e) {
-      this.error.set(e instanceof Error ? e.message : 'Generation failed');
-      this.generatedPassword.set('');
+      if (version === this.generationVersion) {
+        this.error.set(e instanceof Error ? e.message : 'Generation failed');
+        this.generatedPassword.set('');
+      }
     } finally {
-      this.generating.set(false);
+      if (version === this.generationVersion) this.generating.set(false);
     }
   }
 
@@ -122,6 +144,8 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   newParam(): void {
+    this.generationVersion++;
+    this.generating.set(false);
     const p = createDefaultParams();
     this.editParams.set(p);
     this.selectedId.set(null);
@@ -152,6 +176,8 @@ export class AppComponent implements OnInit, OnDestroy {
   deleteParam(): void {
     const p = this.editParams();
     if (!p) return;
+    this.generationVersion++;
+    this.generating.set(false);
     const updated = this.storage.remove(p.id);
     this.savedParams.set(updated);
     this.editParams.set(null);
@@ -162,13 +188,14 @@ export class AppComponent implements OnInit, OnDestroy {
   async copyPassword(): Promise<void> {
     const pwd = this.generatedPassword();
     if (!pwd) return;
+    const version = this.secretVersion;
 
     const copied = await this.writeClipboardWithRetry(pwd);
 
     if (copied) {
       this.copyError.set(false);
       this.copySuccess.set(true);
-      this.clearMasterSecret(false);
+      if (version === this.secretVersion) this.clearMasterSecret(false);
       setTimeout(() => this.copySuccess.set(false), 2000);
       setTimeout(() => {
         void this.writeClipboardWithRetry('');
@@ -205,12 +232,43 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   clearMasterSecret(clearGeneratedPassword = true): void {
+    this.secretVersion++;
+    this.generationVersion++;
+    this.generating.set(false);
+    this.cancelSecurityKeyOperation();
+    this.endKeySession();
     this.masterSecret.set('');
     this.showMasterSecret.set(false);
 
     if (clearGeneratedPassword) {
       this.generatedPassword.set('');
+      this.showPassword.set(false);
     }
+  }
+
+  onSecurityKeyUnlocked(secret: string): void {
+    this.secretVersion++;
+    this.endKeySession();
+    this.masterSecret.set(secret);
+    this.showMasterSecret.set(false);
+    this.keyUnlocked.set(true);
+    this.keyLockTimer = setTimeout(() => this.clearMasterSecret(), 5 * 60_000);
+    this.triggerRegenerate();
+  }
+
+  onParamsImported(params: PasswordParams[]): void {
+    this.savedParams.set(params);
+  }
+
+  private endKeySession(): void {
+    clearTimeout(this.keyLockTimer);
+    this.keyLockTimer = undefined;
+    this.keyUnlocked.set(false);
+  }
+
+  private cancelSecurityKeyOperation(): void {
+    this.keyControls?.cancelOperation();
+    this.securityKeyResetVersion.update(version => version + 1);
   }
 
   private async writeClipboardWithRetry(text: string): Promise<boolean> {
@@ -239,6 +297,9 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   onMasterSecretChange(): void {
+    this.secretVersion++;
+    this.endKeySession();
+    this.cancelSecurityKeyOperation();
     this.triggerRegenerate();
   }
 

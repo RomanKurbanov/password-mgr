@@ -4,7 +4,8 @@
   "scripts": {
     "ng": "ng",
     "start": "ng serve",
-    "build": "ng build"
+    "build": "ng build",
+    "test": "node scripts/test.mjs"
   },
   "dependencies": {
     "@angular/common": "18.2.14",
@@ -19,6 +20,7 @@
     "@angular/build": "18.2.14",
     "@angular/cli": "18.2.14",
     "@angular/compiler-cli": "18.2.14",
+    "esbuild": "0.23.0",
     "typescript": "5.5.4"
   }
 }

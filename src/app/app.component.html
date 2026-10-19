@@ -59,6 +59,20 @@
         }
       </div>
 
+      @if (keyUnlocked()) {
+        <div class="key-session" role="status">
+          Unlocked with security key · locks after five minutes
+          <button class="btn" type="button" (click)="clearMasterSecret()">Lock now</button>
+        </div>
+      }
+      <app-security-keys
+        [masterSecret]="masterSecret()"
+        [resetVersion]="securityKeyResetVersion()"
+        (unlocked)="onSecurityKeyUnlocked($event)"
+        (paramsImported)="onParamsImported($event)"
+        (lockRequested)="clearMasterSecret()"
+      />
+
       <hr class="divider" />
 
       @if (editParams(); as params) {
