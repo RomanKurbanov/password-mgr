@@ -9,12 +9,12 @@
     </select>
     <button type="button" class="btn primary" (click)="unlock()"
       [disabled]="!supported || !!busy() || !!pendingEnrollment() || selectedKey()?.rpId !== hostname">
-      {{ busy() === 'unlock' ? 'Waiting for key…' : 'Unlock with key' }}
+      {{ busy() === 'unlock' ? 'Waiting for key…' : (copyOnUnlock ? 'Unlock & copy with key' : 'Unlock with key') }}
     </button>
   </div>
 }
 
-<details class="settings">
+<details class="settings" [hidden]="!showSettings" [open]="showSettings">
   <summary>Security keys &amp; backup <span>Optional</span></summary>
   <p>Keep using your master secret, or save an encrypted copy that a physical key can unlock. Your generated passwords stay the same.</p>
 

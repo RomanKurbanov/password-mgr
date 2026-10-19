@@ -36,6 +36,10 @@ export class AppComponent implements OnInit, OnDestroy {
 
   // State signals
   sidebarOpen = signal(false);
+  editing = signal(false);
+  settingsOpen = signal(false);
+  searchQuery = signal('');
+  usernameCopyMessage = signal('');
   masterSecret = signal('');
   showMasterSecret = signal(false);
   savedParams = signal<PasswordParams[]>([]);
@@ -65,6 +69,44 @@ export class AppComponent implements OnInit, OnDestroy {
     )
   );
 
+  filteredParams = computed(() => {
+    const query = this.searchQuery().trim().toLowerCase();
+    return this.sortedParams().filter(p => [p.name, p.domain, p.username].some(value => value.toLowerCase().includes(query)));
+  });
+
+  cancelEdit(): void {
+    const saved = this.selectedParams();
+    this.editParams.set(saved ? { ...saved } : null);
+    this.editing.set(false);
+    this.triggerRegenerate();
+  }
+
+  async copyUsername(): Promise<void> {
+    const username = this.editParams()?.username;
+    if (!username) return;
+    try {
+      await navigator.clipboard.writeText(username);
+      this.usernameCopyMessage.set('Username copied.');
+    } catch {
+      this.usernameCopyMessage.set('Could not copy username. Please try again.');
+    }
+  }
+
+  async generateAndCopy(): Promise<void> {
+    if (this.copyIntent || this.copying() || !this.masterSecret() || this.editing()) return;
+    this.copyIntent = true;
+    const params = this.editParams();
+    const secretVersion = this.secretVersion;
+    try {
+      if (!this.generatedPassword()) await this.doGenerate();
+      if (params === this.editParams() && secretVersion === this.secretVersion && !this.editing()) {
+        await this.copyPassword();
+      }
+    } finally {
+      this.copyIntent = false;
+    }
+  }
+
   secretWeak = computed(() => {
     const s = this.masterSecret();
     return s.length > 0 && s.length < 12;
@@ -74,6 +116,7 @@ export class AppComponent implements OnInit, OnDestroy {
   private regenerate$ = new Subject<void>();
   private sub = new Subscription();
   private generationVersion = 0;
+  private copyIntent = false;
   private secretVersion = 0;
   private readonly lockAfterMs = 5 * 60_000;
   private lockTimer: ReturnType<typeof setTimeout> | undefined;
@@ -118,7 +161,7 @@ export class AppComponent implements OnInit, OnDestroy {
 
     this.sub.add(
       this.regenerate$.pipe(debounceTime(500)).subscribe(() => {
-        void this.doGenerate();
+        if (!this.copyIntent) void this.doGenerate();
       })
     );
   }
@@ -171,6 +214,10 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   selectParam(id: string): void {
+    this.editing.set(false);
+    this.settingsOpen.set(false);
+    this.copySuccess.set(false);
+    this.usernameCopyMessage.set('');
     this.selectedId.set(id);
     this.sidebarOpen.set(false);
     const found = this.savedParams().find(p => p.id === id);
@@ -183,6 +230,8 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   newParam(): void {
+    this.editing.set(true);
+    this.settingsOpen.set(false);
     this.generationVersion++;
     this.generating.set(false);
     const p = createDefaultParams();
@@ -206,6 +255,7 @@ export class AppComponent implements OnInit, OnDestroy {
       this.savedParams.set(updated);
       this.editParams.set(p);
       this.selectedId.set(p.id);
+      this.editing.set(false);
       this.storageError.set('');
     } catch (error) {
       this.reportStorageError(error);
@@ -316,6 +366,11 @@ export class AppComponent implements OnInit, OnDestroy {
     this.keyDeadline = this.idleDeadline = Date.now() + this.lockAfterMs;
     this.scheduleLock();
     this.triggerRegenerate();
+  }
+
+  async onKeyCopyUnlocked(secret: string): Promise<void> {
+    this.onSecurityKeyUnlocked(secret);
+    if (this.editParams() && !this.editing() && !this.settingsOpen()) await this.generateAndCopy();
   }
 
   onParamsImported(params: PasswordParams[]): void {

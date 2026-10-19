@@ -1,88 +1,44 @@
 <div class="app-shell">
   <header class="app-header">
     <h1>Password Manager</h1>
-    <button class="btn btn-sidebar-toggle" (click)="sidebarOpen.set(!sidebarOpen())">
-      {{ sidebarOpen() ? '✕' : '☰' }} History
-    </button>
+    <div class="toolbar">
+      <span class="session-status">{{ masterSecret() ? 'Secret in memory' : 'Locked' }}</span>
+      @if (masterSecret()) { <button class="btn" (click)="clearMasterSecret()">Lock now</button> }
+      <button class="btn" [attr.aria-expanded]="settingsOpen()" (click)="settingsOpen.set(!settingsOpen())">Settings</button>
+      <button class="btn btn-sidebar-toggle" [attr.aria-expanded]="sidebarOpen()" (click)="sidebarOpen.set(!sidebarOpen())">Passwords</button>
+    </div>
   </header>
-
   <div class="app-body">
-    <!-- Left column: saved sets -->
-    <aside class="sidebar" [class.sidebar-open]="sidebarOpen()">
-      <button class="btn btn-new" (click)="newParam()">+ New</button>
+    <aside class="sidebar" [class.sidebar-open]="sidebarOpen() || !editParams()">
+      <label class="search-label" for="search">Saved passwords</label>
+      <input id="search" class="input search-input" type="search" placeholder="Search passwords…" aria-label="Search passwords" autofocus
+        [ngModel]="searchQuery()" (ngModelChange)="searchQuery.set($event)" />
+      <button class="btn btn-new" (click)="newParam()">+ New password</button>
       <div class="saved-list">
-        @for (p of sortedParams(); track p.id) {
-          <div
-            class="saved-item"
-            [class.active]="p.id === selectedId()"
-            (click)="selectParam(p.id)"
-          >
-            <span class="saved-dot">●</span>
-            <div class="saved-item-body">
+        @for (p of filteredParams(); track p.id) {
+          <button class="saved-item" [class.active]="p.id === selectedId()" [attr.aria-current]="p.id === selectedId() ? 'true' : null" (click)="selectParam(p.id)">
+            <span class="saved-item-body">
               <span class="saved-name">{{ p.name || '(unnamed)' }}</span>
-              <span class="saved-meta">{{ formatUpdatedAt(p.updatedAt) }}</span>
-            </div>
-          </div>
-        }
-        @if (savedParams().length === 0) {
-          <p class="empty-hint">{{ storageError() ? 'Saved history unavailable' : 'No saved history' }}</p>
-        }
+              <span class="saved-meta">{{ p.domain }}</span>
+            </span>
+          </button>
+        } @empty { <p class="empty-hint">{{ searchQuery() ? 'No matching passwords' : 'No saved passwords' }}</p> }
       </div>
     </aside>
-
-    <!-- Right column: editor -->
     <main class="editor">
-      <!-- Master secret row -->
-      <div class="master-row">
-        <label class="field-label" for="masterSecret">Master Secret</label>
-        <div class="input-group">
-          <input
-            id="masterSecret"
-            class="input master-input"
-            [type]="!supportsTextSecurity && !showMasterSecret() ? 'password' : 'text'"
-            [class.master-masked]="supportsTextSecurity && !showMasterSecret()"
-            [value]="masterSecret()"
-            (input)="masterSecret.set($any($event.target).value); onMasterSecretChange()"
-            placeholder="Enter master secret…"
-            [attr.autocomplete]="supportsTextSecurity ? 'off' : 'new-password'"
-            spellcheck="false"
-          />
-          <button
-            class="btn btn-icon"
-            (click)="showMasterSecret.set(!showMasterSecret())"
-            [title]="showMasterSecret() ? 'Hide' : 'Show'"
-          >{{ showMasterSecret() ? '🙈' : '👁' }}</button>
-          <button class="btn btn-icon" (click)="clearMasterSecret()" title="Clear">✕</button>
-        </div>
-        @if (secretWeak()) {
-          <span class="weak-secret-hint">⚠ Short master secret — use a long, independently generated secret or randomly generated passphrase.</span>
-        }
-      </div>
-
       @if (storageError()) {
-        <div role="alert" class="error-hint">
-          <p>{{ storageError() }}</p>
-          <button class="btn" type="button" (click)="downloadStoredSettings()">Download original settings for recovery</button>
+        <div role="alert" class="error-hint"><p>{{ storageError() }}</p>
+          <button class="btn" (click)="downloadStoredSettings()">Download original settings for recovery</button>
         </div>
       }
-
-      @if (keyUnlocked()) {
-        <div class="key-session" role="status">
-          Unlocked with security key · locks after five minutes
-          <button class="btn" type="button" (click)="clearMasterSecret()">Lock now</button>
-        </div>
-      }
-      <app-security-keys
-        [masterSecret]="masterSecret()"
-        [resetVersion]="securityKeyResetVersion()"
-        (unlocked)="onSecurityKeyUnlocked($event)"
-        (paramsImported)="onParamsImported($event)"
-        (lockRequested)="clearMasterSecret()"
-      />
-
-      <hr class="divider" />
-
       @if (editParams(); as params) {
+        <div class="detail-header">
+          <div><h2>{{ editing() ? (selectedId() ? 'Edit password' : 'New password') : (params.name || '(unnamed)') }}</h2>
+            @if (!editing()) { <p class="detail-domain">{{ params.domain }}</p> }
+          </div>
+          @if (!editing()) { <button class="btn" (click)="editing.set(true)">Edit</button> }
+        </div>
+        @if (editing()) {
         <!-- Name -->
         <div class="field-row">
           <label class="field-label" for="name">Name</label>
@@ -195,50 +151,80 @@
           />
         </div>
 
-        <hr class="divider" />
 
-        <!-- Generated password output -->
-        <div class="output-row">
-          @if (copySuccess()) {
-            <span role="status">✓ Copied. Master secret and generated password cleared.</span>
-          } @else if (generating()) {
-            <span class="generating-hint">⏳ Generating…</span>
-          } @else if (generatedPassword()) {
-            <div class="password-output-group">
-              <span class="password-output" [class.blurred]="!showPassword()">
-                {{ generatedPassword() }}
-              </span>
-              <button
-                class="btn btn-icon"
-                (click)="showPassword.set(!showPassword())"
-                [title]="showPassword() ? 'Hide password' : 'Show password'"
-              >{{ showPassword() ? '🙈' : '👁' }}</button>
-              <button class="btn btn-copy" (click)="copyPassword()" [disabled]="copying()">
-                {{ copying() ? 'Copying…' : 'Copy' }}
-              </button>
-              @if (copyError()) {
-                <span class="error-hint copy-error">✗ Copy failed</span>
-              }
+          <p class="empty-hint">Changing the domain, username, counter, or generation options changes the generated password.</p>
+          <div class="action-row">
+            <button class="btn btn-save" (click)="saveParam()" [disabled]="!params.domain.trim()">Save changes</button>
+            <button class="btn" (click)="cancelEdit()">Cancel</button>
+            @if (selectedId()) { <button class="btn btn-delete" (click)="deleteParam()">Delete</button> }
+          </div>
+        } @else {
+          <section class="credential-card" aria-label="Account credentials">
+            <div class="credential-row"><div><span class="field-label">Username</span><p>{{ params.username || 'No username' }}</p></div>
+              @if (params.username) { <button class="btn" (click)="copyUsername()">Copy username</button> }
             </div>
-          } @else if (error()) {
-            <span class="error-hint">⚠ {{ error() }}</span>
-          } @else {
-            <span class="empty-hint">Enter master secret and domain to generate</span>
-          }
+            <div class="credential-row"><div><span class="field-label">Password</span>
+              <p class="password-value">{{ showPassword() && generatedPassword() ? generatedPassword() : '••••••••••••••••' }}</p></div>
+              @if (generatedPassword()) { <button class="btn" (click)="showPassword.set(!showPassword())">{{ showPassword() ? 'Hide password' : 'Show password' }}</button> }
+            </div>
+          </section>
+        }
+      } @else if (!settingsOpen()) {
+        <div class="no-selection"><p>Select a saved password or create a new one.</p></div>
+      }
+      @if ((editParams() && !editing()) || settingsOpen()) {
+        <section class="unlock-panel">
+      <!-- Master secret row -->
+      <div class="master-row">
+        <label class="field-label" for="masterSecret">Master password</label>
+        <div class="input-group">
+          <input
+            id="masterSecret"
+            class="input master-input"
+            [type]="!supportsTextSecurity && !showMasterSecret() ? 'password' : 'text'"
+            [class.master-masked]="supportsTextSecurity && !showMasterSecret()"
+            [value]="masterSecret()"
+            (keydown.enter)="generateAndCopy()"
+            (input)="masterSecret.set($any($event.target).value); onMasterSecretChange()"
+            placeholder="Enter master secret…"
+            [attr.autocomplete]="supportsTextSecurity ? 'off' : 'new-password'"
+            spellcheck="false"
+          />
+          <button
+            class="btn btn-icon"
+            (click)="showMasterSecret.set(!showMasterSecret())"
+            [attr.aria-label]="showMasterSecret() ? 'Hide master password' : 'Show master password'"
+          >{{ showMasterSecret() ? 'Hide' : 'Show' }}</button>
+          <button class="btn btn-icon" (click)="clearMasterSecret()" aria-label="Clear master password">✕</button>
         </div>
+        @if (secretWeak()) {
+          <span class="weak-secret-hint">⚠ Short master secret — use a long, independently generated secret or randomly generated passphrase.</span>
+        }
+      </div>
 
-        <!-- Action buttons -->
-        <div class="action-row">
-          <button class="btn btn-save" (click)="saveParam()">Save</button>
-          @if (selectedId()) {
-            <button class="btn btn-delete" (click)="deleteParam()">Delete</button>
-          }
-        </div>
-      } @else {
-        <div class="no-selection">
-          <p>Select a saved set or click <strong>+ New</strong> to get started.</p>
+
+        </section>
+      }
+      <app-security-keys
+        [hidden]="!settingsOpen() && (!editParams() || editing())"
+        [showSettings]="settingsOpen()"
+        [copyOnUnlock]="!!editParams() && !editing() && !settingsOpen()"
+        [masterSecret]="masterSecret()" [resetVersion]="securityKeyResetVersion()"
+        (unlocked)="onKeyCopyUnlocked($event)" (paramsImported)="onParamsImported($event)" (lockRequested)="clearMasterSecret()"
+      />
+      @if (editParams() && !editing()) {
+        <div>
+            <button class="btn btn-save primary-copy" (click)="generateAndCopy()" [disabled]="!masterSecret() || generating() || copying()">
+              {{ copying() ? 'Copying…' : generating() ? 'Generating…' : 'Copy password' }}
+            </button>
         </div>
       }
+      <div aria-live="polite">
+        @if (copySuccess()) { <p class="success-hint">Password copied. App locked.</p> }
+        @if (usernameCopyMessage()) { <p>{{ usernameCopyMessage() }}</p> }
+        @if (copyError()) { <p class="error-hint">Could not copy. Please try Copy password again.</p> }
+        @if (error()) { <p class="error-hint">{{ error() }}</p> }
+      </div>
     </main>
   </div>
 </div>

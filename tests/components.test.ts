@@ -612,3 +612,43 @@ test('corrupted site settings block imports before any key write', async () => {
   assert.deepEqual(writes, []);
   assert.match(component.error(), /damaged/);
 });
+
+test('retrieval searches account fields and cancel restores saved settings', () => {
+  const { component } = app({ generatePassword: async () => 'password' });
+  const saved = passwordParams({ name: 'Railway', domain: 'rail.example', username: 'traveller' });
+  component.savedParams.set([saved]);
+  component.searchQuery.set('TRAVELLER');
+  assert.equal(component.filteredParams().length, 1);
+  component.searchQuery.set('missing');
+  assert.equal(component.filteredParams().length, 0);
+  component.selectParam(saved.id);
+  assert.equal(component.editing(), false);
+  component.editing.set(true);
+  component.editParams.set({ ...saved, length: 32 });
+  component.cancelEdit();
+  assert.deepEqual(component.editParams(), saved);
+  assert.equal(component.editing(), false);
+});
+
+test('copy intent generates, copies, and locks without revealing the password', async () => {
+  const { component } = app({ generatePassword: async () => 'generated result' });
+  const copied: string[] = [];
+  navigator.clipboard.writeText = async text => { copied.push(text); };
+  await component.generateAndCopy();
+  assert.deepEqual(copied, ['generated result']);
+  assert.equal(component.masterSecret(), '');
+  assert.equal(component.showPassword(), false);
+  assert.equal(component.copySuccess(), true);
+});
+
+test('changing accounts during unlock-and-copy never copies another account', async () => {
+  const pending = deferred<string>();
+  const { component } = app({ generatePassword: () => pending.promise });
+  const copied: string[] = [];
+  navigator.clipboard.writeText = async text => { copied.push(text); };
+  const run = component.generateAndCopy();
+  component.newParam();
+  pending.resolve('old account');
+  await run;
+  assert.deepEqual(copied, []);
+});

@@ -442,3 +442,42 @@
     padding-left: 0;
   }
 }
+
+/* Retrieval is the default; configuration stays in the editor. */
+.app-header { padding: 0.65rem 1.25rem; }
+.app-header h1 { font-size: 1rem; }
+.toolbar, .detail-header, .credential-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.toolbar { flex-wrap: wrap; }
+.session-status, .detail-domain, .empty-hint, .saved-meta { color: var(--text-muted); }
+.session-status, .search-label { font-size: 0.8rem; }
+.sidebar { width: 250px; }
+.search-input { flex: none; width: 100%; }
+.saved-item { border: 0; background: transparent; color: var(--text); font-family: inherit; text-align: left; width: 100%; padding: 0.7rem; }
+.saved-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editor { min-width: 0; padding: 2rem; gap: 1rem; }
+.detail-header h2 { margin: 0; font-size: 1.5rem; overflow-wrap: anywhere; }
+.detail-domain { margin: 0.4rem 0 0; }
+.credential-card { border: 1px solid var(--border); border-radius: 10px; background: var(--surface); padding: 0 1.25rem; }
+.credential-row { padding: 1.25rem 0; }
+.credential-row + .credential-row { border-top: 1px solid var(--border); }
+.credential-row p { margin: 0.5rem 0 0; overflow-wrap: anywhere; }
+.credential-row > div { min-width: 0; }
+.credential-row .btn { flex-shrink: 0; }
+.password-value { font-family: monospace; letter-spacing: 0.06em; }
+.unlock-panel { padding-top: 0.5rem; }
+.primary-copy { margin-top: 1rem; padding: 0.7rem 1.25rem; }
+.master-row .input-group, .master-input { min-width: 0; }
+.success-hint { color: var(--accent); }
+.btn:focus-visible, .saved-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+app-security-keys[hidden] { display: none; }
+@media (max-width: 600px) {
+  .app-header { align-items: flex-start; gap: 0.75rem; }
+  .toolbar { justify-content: flex-end; gap: 0.5rem; }
+  .session-status { display: none; }
+  .sidebar { width: 100%; }
+  .editor { padding: 1rem; }
+  .credential-row { flex-wrap: wrap; }
+  .master-row .input-group { flex-basis: 100%; }
+  .field-row { flex-wrap: wrap; }
+  .field-row > .input { min-width: 0; }
+}
