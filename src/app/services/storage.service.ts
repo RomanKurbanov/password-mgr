@@ -1,41 +1,46 @@
 import { Injectable } from '@angular/core';
 import { PasswordParams } from '../models/password-params.model';
+import { parseParams } from './backup';
 
 const STORAGE_KEY = 'password-mgr:params';
-
-function isValidParam(p: unknown): p is PasswordParams {
-  if (typeof p !== 'object' || p === null) return false;
-  const obj = p as Record<string, unknown>;
-  return (
-    typeof obj['id'] === 'string' &&
-    typeof obj['domain'] === 'string' &&
-    typeof obj['length'] === 'number' &&
-    obj['length'] >= 8 &&
-    obj['length'] <= 64 &&
-    typeof obj['counter'] === 'number' &&
-    obj['counter'] >= 1 &&
-    typeof obj['includeUppercase'] === 'boolean' &&
-    typeof obj['includeLowercase'] === 'boolean' &&
-    typeof obj['includeNumbers'] === 'boolean'
-  );
-}
 
 @Injectable({ providedIn: 'root' })
 export class StorageService {
   load(): PasswordParams[] {
+    let raw: string | null;
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      return parsed.filter(isValidParam);
+      raw = this.readRaw();
     } catch {
-      return [];
+      throw new Error('Cannot read saved site settings. Check browser storage permissions and reload.');
+    }
+    if (raw === null) return [];
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) throw new Error();
+      const params = parsed.map(parseParams);
+      if (new Set(params.map(p => p.id)).size !== params.length) throw new Error();
+      return params;
+    } catch {
+      throw new Error('Saved site settings are damaged. Download the original data for recovery; saving, deleting, and importing are blocked to preserve it.');
     }
   }
 
+  readRaw(): string | null {
+    return localStorage.getItem(STORAGE_KEY);
+  }
+
   save(params: PasswordParams[]): void {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(params));
+    // Recheck storage before every write, including imports and changes in other tabs.
+    this.load();
+    const validated = params.map(parseParams);
+    if (new Set(validated.map(p => p.id)).size !== validated.length) {
+      throw new Error('Site settings contain duplicate IDs.');
+    }
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(validated));
+    } catch {
+      throw new Error('Could not save site settings. Check browser storage permissions or available space and retry.');
+    }
   }
 
   upsert(params: PasswordParams[]): void {

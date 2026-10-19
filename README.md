@@ -4,7 +4,11 @@ A frontend-only, deterministic password generator built with Angular. Your maste
 
 ## Generate passwords
 
-Enter your master secret, then select a saved set or choose **+ New** and enter the site settings. Passwords regenerate as you edit. **Save** keeps the settings, without saving a plaintext master secret or generated password. **Copy** copies the password and clears the master secret, as before; the app attempts to clear the clipboard after 30 seconds, subject to browser permissions.
+Enter your master secret, then select a saved set or choose **+ New** and enter the site settings. Passwords regenerate as you edit. **Save** keeps the settings, without saving a plaintext master secret or generated password. **Copy** copies the password and then clears both the master secret and generated password from the app. A failed copy leaves them available for retry. The app does not automatically overwrite the clipboard; clear it yourself when finished, and consider your device’s clipboard history or sync settings.
+
+Use a long, independently generated master secret or a passphrase made from randomly selected words. Length alone does not establish strength. Keep your exact existing secret to regenerate existing passwords; changing it changes those passwords.
+
+Both manual and key-unlocked sessions lock when leaving the page. Manual entry also locks after five minutes without keyboard or pointer activity. Key-unlocked sessions have a five-minute maximum even with activity. On returning to a suspended tab, the app checks elapsed time before allowing more use.
 
 The existing password-generation algorithm and manual master-secret entry are unchanged. Security-key unlock is optional and supplies the same master secret to that algorithm, so enrolling a key does not change existing generated passwords.
 
@@ -19,7 +23,7 @@ Use a FIDO2 security key with WebAuthn PRF (`hmac-secret`) support, such as a co
 
 Between registration and **Finish setup**, the pending credential metadata stays only in this page's memory. Cancelling setup, editing or clearing the master secret, or leaving the page discards that pending state. Start registration again if you discard it. Cancelling does not remove a credential that was already created on the physical key.
 
-The browser obtains a repeatable PRF secret from the credential. HKDF-SHA-256 derives an AES-256-GCM key, which encrypts the original master secret with a fresh nonce. Only encrypted master-secret copies and public credential metadata are saved. The decrypted secret exists temporarily in memory. Copying a password clears it; key-unlocked sessions also lock automatically after five minutes. Use the lock/clear control to end a session sooner. Removing a key's saved record only removes its encrypted copy from this browser; it does not erase credentials on the physical key.
+The browser obtains a repeatable PRF secret from the credential. HKDF-SHA-256 derives an AES-256-GCM key, which encrypts the original master secret with a fresh nonce. Only encrypted master-secret copies and public credential metadata are saved. The decrypted secret exists temporarily in memory. Copying a password clears both secrets from the app; key-unlocked sessions also lock automatically after five minutes. Use the lock/clear control to end a session sooner. Removing a key's saved record only removes its encrypted copy from this browser; it does not erase credentials on the physical key.
 
 Enroll a spare physical key using the **same exact master secret**. Each key has its own encrypted copy and can unlock the same generator inputs independently.
 
@@ -76,3 +80,35 @@ npm run build
 ```
 
 The build output is static and can be hosted without a backend. Development enrollment on localhost creates separate credentials from production; it does not enroll a key for the production domain.
+
+## Saved-settings errors
+
+Unreadable or malformed saved site settings produce a visible error. Invalid records are never silently dropped. Saving, deleting, and importing recheck storage and stop if it is damaged or unreadable. The app updates the saved list only after a successful write. Manual generation remains available.
+
+Use **Download original settings for recovery** to retain the exact stored text before attempting recovery. This recovery file can contain readable account details and is not an importable backup. Keep the original browser data; restore a valid backup in a fresh profile at the same origin, or repair a copy of the recovery data before any manual restoration.
+
+## Production hosting hardening
+
+The app's HTML CSP allows scripts only from its own origin, without inline scripts. Angular currently needs inline styles, so the style policy retains that permission. The app refuses to initialize inside a frame as a fallback. This JavaScript check is weaker than browser-enforced response headers.
+
+For full framing protection, use a host or proxy that serves the following HTTP response headers on the HTML document:
+
+```text
+Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'none'; img-src 'none'; font-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none';
+X-Frame-Options: DENY
+X-Content-Type-Options: nosniff
+Referrer-Policy: no-referrer
+```
+
+`frame-ancestors` must be a response header; adding it to an HTML meta tag has no effect. GitHub Pages does not offer repository-configurable custom response headers; use a header-capable host or proxy for these headers. Verify them on the deployed HTML response and test that an iframe is refused.
+
+Use a dedicated HTTPS origin for this app. Other applications under the same hostname share its local-storage boundary even when their URL paths differ. A custom hostname can isolate storage, but response headers still need hosting support.
+
+Before changing domains:
+
+1. Export a valid backup and confirm that you know the exact master secret, or can unlock it at the current domain.
+2. Configure the dedicated hostname, HTTPS, response headers, and the production base path (the current workflow builds for `/password-mgr/`; a root deployment needs `/`).
+3. Import settings at the new origin and manually enter the original master secret. Existing key credentials are domain scoped and may not unlock there; enroll the keys again at the new domain.
+4. Verify identical generated passwords, key unlock, and a new backup before retiring the old deployment. Local storage is not transferred automatically.
+
+No domain or hosting migration is performed by the application changes alone.

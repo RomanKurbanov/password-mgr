@@ -126,15 +126,19 @@ test('new entry and deletion invalidate pending password calculations', async ()
   }
 });
 
-test('copy keeps the generated password and clears the master as before', async t => {
+test('copy clears both secrets and reveal states after a successful write', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const { component } = app({ generatePassword: async () => '' });
   component.onSecurityKeyUnlocked('original master');
   component.generatedPassword.set('password to copy');
+  component.showPassword.set(true);
+  component.showMasterSecret.set(true);
   await component.copyPassword();
   assert.equal(component.masterSecret(), '');
   assert.equal(component.keyUnlocked(), false);
-  assert.equal(component.generatedPassword(), 'password to copy');
+  assert.equal(component.generatedPassword(), '');
+  assert.equal(component.showPassword(), false);
+  assert.equal(component.showMasterSecret(), false);
   assert.equal(component.copySuccess(), true);
   component.ngOnDestroy();
 });
@@ -170,7 +174,7 @@ test('copy still clears the same unlocked secret when site settings change durin
   component.ngOnDestroy();
 });
 
-test('key sessions expire in five minutes without timing out manual entry', t => {
+test('key sessions and inactive manual sessions expire in five minutes', t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const { component } = app({ generatePassword: async () => '' });
   component.onSecurityKeyUnlocked('original master');
@@ -182,17 +186,17 @@ test('key sessions expire in five minutes without timing out manual entry', t =>
   component.masterSecret.set('manual value');
   component.onMasterSecretChange();
   t.mock.timers.tick(5 * 60_000);
-  assert.equal(component.masterSecret(), 'manual value');
+  assert.equal(component.masterSecret(), '');
   assert.equal(component.keyUnlocked(), false);
   component.ngOnDestroy();
 });
 
-test('leaving the page locks a key session but preserves the manual-entry behavior', t => {
+test('leaving the page locks both manual and key sessions', t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
   const { component, events } = app({ generatePassword: async () => '' });
   component.ngOnInit();
   events.dispatchEvent(new Event('pagehide'));
-  assert.equal(component.masterSecret(), 'original master');
+  assert.equal(component.masterSecret(), '');
   component.onSecurityKeyUnlocked('unlocked value');
   events.dispatchEvent(new Event('pagehide'));
   assert.equal(component.masterSecret(), '');
@@ -486,4 +490,125 @@ test('diagnostic clipboard failure gives an actionable message without writing k
   assert.equal(diagnostics.exportReport().includes(component.masterSecret), false);
   assert.equal(diagnostics.entries().length, 1, 'the report remains available for manual copying');
   assert.deepEqual(writes, []);
+});
+
+
+test('failed copying retains the password and never clears the clipboard later', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { component } = app({ generatePassword: async () => '' });
+  const written: string[] = [];
+  navigator.clipboard.writeText = async text => { written.push(text); throw new Error('denied'); };
+  component.generatedPassword.set('retry-me');
+  t.mock.method(component as any, 'delay', async () => {});
+  await component.copyPassword();
+  assert.equal(component.copyError(), true);
+  assert.equal(component.generatedPassword(), 'retry-me');
+  assert.equal(component.masterSecret(), 'original master');
+  navigator.clipboard.writeText = async text => { written.push(text); };
+  await component.copyPassword();
+  written.push('unrelated clipboard content');
+  t.mock.timers.tick(30_000);
+  assert.equal(written.at(-1), 'unrelated clipboard content');
+  assert.equal(written.includes(''), false);
+  component.ngOnDestroy();
+});
+
+test('locking during clipboard retries prevents further writes or stale feedback', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { component } = app({ generatePassword: async () => '' });
+  let writes = 0;
+  navigator.clipboard.writeText = async () => { writes++; throw new Error('denied'); };
+  component.generatedPassword.set('password');
+  const copy = component.copyPassword();
+  await Promise.resolve();
+  component.clearMasterSecret();
+  t.mock.timers.tick(150);
+  await copy;
+  assert.equal(writes, 1);
+  assert.equal(component.copyError(), false);
+  assert.equal(component.copySuccess(), false);
+  component.ngOnDestroy();
+});
+
+test('manual activity extends idle time but cannot extend key session lifetime', t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
+  const { component, events } = app({ generatePassword: async () => '' });
+  component.ngOnInit();
+  component.onMasterSecretChange();
+  t.mock.timers.tick(4 * 60_000);
+  events.dispatchEvent(new Event('keydown'));
+  t.mock.timers.tick(4 * 60_000);
+  assert.equal(component.masterSecret(), 'original master');
+  t.mock.timers.tick(60_000);
+  assert.equal(component.masterSecret(), '');
+  component.onSecurityKeyUnlocked('key secret');
+  t.mock.timers.tick(4 * 60_000);
+  events.dispatchEvent(new Event('pointerdown'));
+  t.mock.timers.tick(60_000);
+  assert.equal(component.masterSecret(), '');
+  component.ngOnDestroy();
+});
+
+test('resuming after a suspended deadline locks before activity can extend it', t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
+  const { component, events } = app({ generatePassword: async () => '' });
+  component.ngOnInit();
+  component.onMasterSecretChange();
+  t.mock.timers.setTime(Date.now() + 5 * 60_000);
+  events.dispatchEvent(new Event('focus'));
+  events.dispatchEvent(new Event('keydown'));
+  assert.equal(component.masterSecret(), '');
+  assert.equal(component.generatedPassword(), '');
+  component.ngOnDestroy();
+});
+
+test('pagehide prevents pending generation from restoring a manual password', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  const pending = deferred<string>();
+  const { component, events, generate } = app({ generatePassword: () => pending.promise });
+  component.ngOnInit();
+  const run = generate();
+  events.dispatchEvent(new Event('pagehide'));
+  pending.resolve('stale-password');
+  await run;
+  assert.equal(component.masterSecret(), '');
+  assert.equal(component.generatedPassword(), '');
+  component.ngOnDestroy();
+});
+
+test('failed storage writes leave saved list, selection and editing timestamp unchanged', () => {
+  environment();
+  const original = passwordParams();
+  const injector = Injector.create({ providers: [
+    { provide: CryptoService, useValue: {} },
+    { provide: StorageService, useValue: {
+      load: () => [original],
+      save: () => { throw new Error('Storage full'); },
+      remove: () => { throw new Error('Storage denied'); },
+    } },
+  ] });
+  const component = runInInjectionContext(injector, () => new AppComponent());
+  component.savedParams.set([original]);
+  component.editParams.set({ ...original, name: 'unsaved' });
+  component.saveParam();
+  assert.deepEqual(component.savedParams(), [original]);
+  assert.equal(component.selectedId(), null);
+  assert.equal(component.editParams()?.updatedAt, original.updatedAt);
+  assert.match(component.storageError(), /Storage full/);
+  component.deleteParam();
+  assert.equal(component.editParams()?.name, 'unsaved');
+  assert.deepEqual(component.savedParams(), [original]);
+  assert.match(component.storageError(), /Storage denied/);
+  component.ngOnDestroy();
+});
+
+test('corrupted site settings block imports before any key write', async () => {
+  const { component, writes } = controls({}, {
+    load: () => { throw new Error('Saved site settings are damaged'); },
+  });
+  const backup = createBackup([passwordParams()], []);
+  const input = { files: [{ size: backup.length, text: async () => backup }], value: 'backup.json' };
+  await component.importBackup(input as unknown as HTMLInputElement);
+  assert.deepEqual(writes, []);
+  assert.match(component.error(), /damaged/);
 });

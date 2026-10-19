@@ -23,7 +23,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function parseParams(value: unknown): PasswordParams {
+export function parseParams(value: unknown): PasswordParams {
   if (!isObject(value)) throw new Error('Backup contains invalid site settings.');
   const strings = ['id', 'name', 'domain', 'username', 'symbols', 'createdAt', 'updatedAt'];
   const booleans = ['includeUppercase', 'includeLowercase', 'includeNumbers'];

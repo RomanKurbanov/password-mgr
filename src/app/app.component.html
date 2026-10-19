@@ -25,7 +25,7 @@
           </div>
         }
         @if (savedParams().length === 0) {
-          <p class="empty-hint">No saved history</p>
+          <p class="empty-hint">{{ storageError() ? 'Saved history unavailable' : 'No saved history' }}</p>
         }
       </div>
     </aside>
@@ -55,9 +55,18 @@
           <button class="btn btn-icon" (click)="clearMasterSecret()" title="Clear">✕</button>
         </div>
         @if (secretWeak()) {
-          <span class="weak-secret-hint">⚠ Weak secret — use 12+ characters</span>
+          <span class="weak-secret-hint">⚠ Short master secret — use a long, independently generated secret or randomly generated passphrase.</span>
         }
       </div>
+
+      <p class="empty-hint">Length alone does not establish strength. Use a long, independently generated master secret or randomly generated passphrase. Manual sessions lock after five minutes of inactivity.</p>
+
+      @if (storageError()) {
+        <div role="alert" class="error-hint">
+          <p>{{ storageError() }}</p>
+          <button class="btn" type="button" (click)="downloadStoredSettings()">Download original settings for recovery</button>
+        </div>
+      }
 
       @if (keyUnlocked()) {
         <div class="key-session" role="status">
@@ -192,7 +201,9 @@
 
         <!-- Generated password output -->
         <div class="output-row">
-          @if (generating()) {
+          @if (copySuccess()) {
+            <span role="status">✓ Copied. Master secret and generated password cleared.</span>
+          } @else if (generating()) {
             <span class="generating-hint">⏳ Generating…</span>
           } @else if (generatedPassword()) {
             <div class="password-output-group">
@@ -204,8 +215,8 @@
                 (click)="showPassword.set(!showPassword())"
                 [title]="showPassword() ? 'Hide password' : 'Show password'"
               >{{ showPassword() ? '🙈' : '👁' }}</button>
-              <button class="btn btn-copy" (click)="copyPassword()">
-                {{ copySuccess() ? '✓ Copied' : 'Copy' }}
+              <button class="btn btn-copy" (click)="copyPassword()" [disabled]="copying()">
+                {{ copying() ? 'Copying…' : 'Copy' }}
               </button>
               @if (copyError()) {
                 <span class="error-hint copy-error">✗ Copy failed</span>

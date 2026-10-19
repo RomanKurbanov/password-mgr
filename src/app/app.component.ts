@@ -46,6 +46,8 @@ export class AppComponent implements OnInit, OnDestroy {
   error = signal('');
   copySuccess = signal(false);
   copyError = signal(false);
+  copying = signal(false);
+  storageError = signal('');
   keyUnlocked = signal(false);
   securityKeyResetVersion = signal(0);
 
@@ -73,15 +75,46 @@ export class AppComponent implements OnInit, OnDestroy {
   private sub = new Subscription();
   private generationVersion = 0;
   private secretVersion = 0;
-  private keyLockTimer: ReturnType<typeof setTimeout> | undefined;
-  private readonly onPageHide = (): void => {
-    if (this.keyUnlocked()) this.clearMasterSecret();
-    else this.cancelSecurityKeyOperation();
+  private readonly lockAfterMs = 5 * 60_000;
+  private lockTimer: ReturnType<typeof setTimeout> | undefined;
+  private idleDeadline = 0;
+  private keyDeadline = 0;
+  private readonly onPageHide = (): void => this.clearMasterSecret();
+  private readonly onResume = (): void => { this.checkSession(); };
+  private readonly onActivity = (): void => {
+    if (!this.checkSession() || !this.masterSecret()) return;
+    this.idleDeadline = Date.now() + this.lockAfterMs;
+    this.scheduleLock();
   };
 
+  private checkSession(): boolean {
+    const now = Date.now();
+    if ((this.idleDeadline && now >= this.idleDeadline) ||
+        (this.keyDeadline && now >= this.keyDeadline)) {
+      this.clearMasterSecret();
+      return false;
+    }
+    return true;
+  }
+
+  private scheduleLock(): void {
+    clearTimeout(this.lockTimer);
+    const deadline = this.keyDeadline ? Math.min(this.idleDeadline, this.keyDeadline) : this.idleDeadline;
+    this.lockTimer = setTimeout(() => this.clearMasterSecret(), Math.max(0, deadline - Date.now()));
+  }
+
   ngOnInit(): void {
-    this.savedParams.set(this.storage.load());
+    try {
+      this.savedParams.set(this.storage.load());
+    } catch (error) {
+      this.reportStorageError(error);
+    }
     window.addEventListener('pagehide', this.onPageHide);
+    window.addEventListener('pageshow', this.onResume);
+    window.addEventListener('focus', this.onResume);
+    window.addEventListener('visibilitychange', this.onResume);
+    window.addEventListener('pointerdown', this.onActivity);
+    window.addEventListener('keydown', this.onActivity);
 
     this.sub.add(
       this.regenerate$.pipe(debounceTime(500)).subscribe(() => {
@@ -93,6 +126,11 @@ export class AppComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     this.sub.unsubscribe();
     window.removeEventListener('pagehide', this.onPageHide);
+    window.removeEventListener('pageshow', this.onResume);
+    window.removeEventListener('focus', this.onResume);
+    window.removeEventListener('visibilitychange', this.onResume);
+    window.removeEventListener('pointerdown', this.onActivity);
+    window.removeEventListener('keydown', this.onActivity);
     this.clearMasterSecret();
   }
 
@@ -106,6 +144,7 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   private async doGenerate(): Promise<void> {
+    if (!this.checkSession()) return;
     const version = ++this.generationVersion;
     const secret = this.masterSecret();
     const current = this.editParams();
@@ -120,7 +159,7 @@ export class AppComponent implements OnInit, OnDestroy {
     this.error.set('');
     try {
       const pwd = await this.crypto.generatePassword(secret, params);
-      if (version === this.generationVersion) this.generatedPassword.set(pwd);
+      if (this.checkSession() && version === this.generationVersion) this.generatedPassword.set(pwd);
     } catch (e) {
       if (version === this.generationVersion) {
         this.error.set(e instanceof Error ? e.message : 'Generation failed');
@@ -156,56 +195,79 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   saveParam(): void {
-    const p = this.editParams();
-    if (!p) return;
-    p.updatedAt = new Date().toISOString();
-
-    const list = this.savedParams();
-    const idx = list.findIndex(x => x.id === p.id);
-    let updated: PasswordParams[];
-    if (idx >= 0) {
-      updated = list.map(x => x.id === p.id ? { ...p } : x);
-    } else {
-      updated = [...list, { ...p }];
+    const current = this.editParams();
+    if (!current) return;
+    const p = { ...current, updatedAt: new Date().toISOString() };
+    try {
+      const list = this.storage.load();
+      const updated = list.some(x => x.id === p.id)
+        ? list.map(x => x.id === p.id ? p : x) : [...list, p];
+      this.storage.save(updated);
+      this.savedParams.set(updated);
+      this.editParams.set(p);
+      this.selectedId.set(p.id);
+      this.storageError.set('');
+    } catch (error) {
+      this.reportStorageError(error);
     }
-    this.savedParams.set(updated);
-    this.storage.save(updated);
-    this.selectedId.set(p.id);
   }
 
   deleteParam(): void {
     const p = this.editParams();
     if (!p) return;
-    this.generationVersion++;
-    this.generating.set(false);
-    const updated = this.storage.remove(p.id);
-    this.savedParams.set(updated);
-    this.editParams.set(null);
-    this.selectedId.set(null);
-    this.generatedPassword.set('');
+    try {
+      const updated = this.storage.remove(p.id);
+      this.savedParams.set(updated);
+      this.editParams.set(null);
+      this.selectedId.set(null);
+      this.triggerRegenerate();
+      this.storageError.set('');
+    } catch (error) {
+      this.reportStorageError(error);
+    }
+  }
+
+  downloadStoredSettings(): void {
+    try {
+      const raw = this.storage.readRaw();
+      if (raw === null) throw new Error('No stored site settings are available to download.');
+      const url = URL.createObjectURL(new Blob([raw], { type: 'text/plain' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'password-mgr-settings-recovery.txt';
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      this.storageError.set('Cannot download stored settings. Check browser storage permissions and retry.');
+    }
+  }
+
+  private reportStorageError(error: unknown): void {
+    this.storageError.set(error instanceof Error ? error.message : 'Could not access saved site settings.');
   }
 
   async copyPassword(): Promise<void> {
+    if (!this.checkSession() || this.copying()) return;
     const pwd = this.generatedPassword();
     if (!pwd) return;
     const version = this.secretVersion;
-
-    const copied = await this.writeClipboardWithRetry(pwd);
-
-    if (copied) {
-      this.copyError.set(false);
-      this.copySuccess.set(true);
-      if (version === this.secretVersion) this.clearMasterSecret(false);
-      setTimeout(() => this.copySuccess.set(false), 2000);
-      setTimeout(() => {
-        void this.writeClipboardWithRetry('');
-      }, 30000);
-      return;
-    }
-
+    this.copying.set(true);
+    this.copyError.set(false);
     this.copySuccess.set(false);
-    this.copyError.set(true);
-    setTimeout(() => this.copyError.set(false), 3000);
+    try {
+      const copied = await this.writeClipboardWithRetry(pwd, version);
+      if (version !== this.secretVersion || !this.checkSession()) return;
+      if (copied) {
+        this.clearMasterSecret();
+        this.copySuccess.set(true);
+        setTimeout(() => this.copySuccess.set(false), 2000);
+      } else {
+        this.copyError.set(true);
+        setTimeout(() => this.copyError.set(false), 3000);
+      }
+    } finally {
+      this.copying.set(false);
+    }
   }
 
   setLength(n: number): void {
@@ -231,7 +293,7 @@ export class AppComponent implements OnInit, OnDestroy {
     this.triggerRegenerate();
   }
 
-  clearMasterSecret(clearGeneratedPassword = true): void {
+  clearMasterSecret(): void {
     this.secretVersion++;
     this.generationVersion++;
     this.generating.set(false);
@@ -239,11 +301,10 @@ export class AppComponent implements OnInit, OnDestroy {
     this.endKeySession();
     this.masterSecret.set('');
     this.showMasterSecret.set(false);
-
-    if (clearGeneratedPassword) {
-      this.generatedPassword.set('');
-      this.showPassword.set(false);
-    }
+    this.generatedPassword.set('');
+    this.showPassword.set(false);
+    this.copySuccess.set(false);
+    this.copyError.set(false);
   }
 
   onSecurityKeyUnlocked(secret: string): void {
@@ -252,17 +313,20 @@ export class AppComponent implements OnInit, OnDestroy {
     this.masterSecret.set(secret);
     this.showMasterSecret.set(false);
     this.keyUnlocked.set(true);
-    this.keyLockTimer = setTimeout(() => this.clearMasterSecret(), 5 * 60_000);
+    this.keyDeadline = this.idleDeadline = Date.now() + this.lockAfterMs;
+    this.scheduleLock();
     this.triggerRegenerate();
   }
 
   onParamsImported(params: PasswordParams[]): void {
     this.savedParams.set(params);
+    this.storageError.set('');
   }
 
   private endKeySession(): void {
-    clearTimeout(this.keyLockTimer);
-    this.keyLockTimer = undefined;
+    clearTimeout(this.lockTimer);
+    this.lockTimer = undefined;
+    this.idleDeadline = this.keyDeadline = 0;
     this.keyUnlocked.set(false);
   }
 
@@ -271,8 +335,9 @@ export class AppComponent implements OnInit, OnDestroy {
     this.securityKeyResetVersion.update(version => version + 1);
   }
 
-  private async writeClipboardWithRetry(text: string): Promise<boolean> {
+  private async writeClipboardWithRetry(text: string, version: number): Promise<boolean> {
     for (let attempt = 1; attempt <= this.clipboardRetryAttempts; attempt += 1) {
+      if (!this.checkSession() || version !== this.secretVersion) return false;
       try {
         await navigator.clipboard.writeText(text);
         return true;
@@ -300,6 +365,12 @@ export class AppComponent implements OnInit, OnDestroy {
     this.secretVersion++;
     this.endKeySession();
     this.cancelSecurityKeyOperation();
+    if (this.masterSecret()) {
+      this.idleDeadline = Date.now() + this.lockAfterMs;
+      this.scheduleLock();
+    }
+    this.copySuccess.set(false);
+    this.copyError.set(false);
     this.triggerRegenerate();
   }
 
