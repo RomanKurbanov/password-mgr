@@ -51,6 +51,7 @@ export class AppComponent implements OnInit, OnDestroy {
   copySuccess = signal(false);
   copyError = signal(false);
   copying = signal(false);
+  copyErrorMessage = signal('Could not copy. Click Copy password to retry. Your secrets remain available until the session locks.');
   storageError = signal('');
   keyUnlocked = signal(false);
   securityKeyResetVersion = signal(0);
@@ -94,13 +95,32 @@ export class AppComponent implements OnInit, OnDestroy {
 
   async generateAndCopy(): Promise<void> {
     if (this.copyIntent || this.copying() || !this.masterSecret() || this.editing()) return;
-    this.copyIntent = true;
     const params = this.editParams();
+    if (!params?.domain || !this.checkSession()) return;
+    this.copyIntent = true;
     const secretVersion = this.secretVersion;
     try {
-      if (!this.generatedPassword()) await this.doGenerate();
-      if (params === this.editParams() && secretVersion === this.secretVersion && !this.editing()) {
+      if (this.generatedPassword()) {
         await this.copyPassword();
+        return;
+      }
+      const password = this.doGenerate().then(() => {
+        if (params !== this.editParams() || secretVersion !== this.secretVersion || this.editing() ||
+            !this.checkSession() || !this.generatedPassword()) {
+          throw new DOMException('The password request changed.', 'AbortError');
+        }
+        return this.generatedPassword();
+      });
+      // A browser may reject the write before consuming the promised clipboard data.
+      void password.catch(() => {});
+      if (typeof ClipboardItem !== 'undefined' && typeof navigator.clipboard?.write === 'function') {
+        // Reserve the clipboard write within the click, before waiting for PBKDF2.
+        await this.copyPassword(password);
+      } else {
+        try {
+          await password;
+          await this.copyPassword();
+        } catch { /* Generation was cancelled; keep the generator's own error. */ }
       }
     } finally {
       this.copyIntent = false;
@@ -296,24 +316,27 @@ export class AppComponent implements OnInit, OnDestroy {
     this.storageError.set(error instanceof Error ? error.message : 'Could not access saved site settings.');
   }
 
-  async copyPassword(): Promise<void> {
+  async copyPassword(pendingPassword?: Promise<string>): Promise<void> {
     if (!this.checkSession() || this.copying()) return;
     const pwd = this.generatedPassword();
-    if (!pwd) return;
+    if (!pendingPassword && !pwd) return;
     const version = this.secretVersion;
     this.copying.set(true);
     this.copyError.set(false);
     this.copySuccess.set(false);
+    this.copyErrorMessage.set('Could not copy. Click Copy password to retry. Your secrets remain available until the session locks.');
     try {
-      const copied = await this.writeClipboardWithRetry(pwd, version);
+      const copied = pendingPassword
+        ? await this.writeDeferredClipboard(pendingPassword, version)
+        : await this.writeClipboardWithRetry(pwd, version);
       if (version !== this.secretVersion || !this.checkSession()) return;
       if (copied) {
         this.clearMasterSecret();
         this.copySuccess.set(true);
         setTimeout(() => this.copySuccess.set(false), 2000);
       } else {
+        if (this.error()) return;
         this.copyError.set(true);
-        setTimeout(() => this.copyError.set(false), 3000);
       }
     } finally {
       this.copying.set(false);
@@ -363,14 +386,16 @@ export class AppComponent implements OnInit, OnDestroy {
     this.masterSecret.set(secret);
     this.showMasterSecret.set(false);
     this.keyUnlocked.set(true);
+    this.copyError.set(false);
+    this.copySuccess.set(false);
     this.keyDeadline = this.idleDeadline = Date.now() + this.lockAfterMs;
     this.scheduleLock();
     this.triggerRegenerate();
   }
 
-  async onKeyCopyUnlocked(secret: string): Promise<void> {
+  onKeyUnlocked(secret: string): void {
     this.onSecurityKeyUnlocked(secret);
-    if (this.editParams() && !this.editing() && !this.settingsOpen()) await this.generateAndCopy();
+    // WebAuthn may consume the click's activation. Copy from a fresh button click.
   }
 
   onParamsImported(params: PasswordParams[]): void {
@@ -396,7 +421,8 @@ export class AppComponent implements OnInit, OnDestroy {
       try {
         await navigator.clipboard.writeText(text);
         return true;
-      } catch {
+      } catch (error) {
+        if (this.clipboardNeedsClick(error, version)) return false;
         if (attempt === this.clipboardRetryAttempts) {
           return false;
         }
@@ -405,6 +431,35 @@ export class AppComponent implements OnInit, OnDestroy {
       }
     }
 
+    return false;
+  }
+
+  private async writeDeferredClipboard(password: Promise<string>, version: number): Promise<boolean> {
+    try {
+      const content = password.then(text => {
+        if (!this.checkSession() || version !== this.secretVersion) {
+          throw new DOMException('The session was locked.', 'AbortError');
+        }
+        return new Blob([text], { type: 'text/plain' });
+      });
+      void content.catch(() => {});
+      await navigator.clipboard.write([new ClipboardItem({ 'text/plain': content })]);
+      await password;
+      return true;
+    } catch (error) {
+      this.clipboardNeedsClick(error, version);
+      await password.catch(() => {});
+      return false;
+    }
+  }
+
+  private clipboardNeedsClick(error: unknown, version: number): boolean {
+    if (error instanceof DOMException && (error.name === 'NotAllowedError' || error.name === 'SecurityError')) {
+      if (version === this.secretVersion) {
+        this.copyErrorMessage.set('The browser did not allow copying. Click Copy password again while this tab is active. Your secrets remain available until the session locks.');
+      }
+      return true;
+    }
     return false;
   }
 

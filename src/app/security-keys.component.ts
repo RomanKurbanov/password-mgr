@@ -19,7 +19,6 @@ export class SecurityKeysComponent implements OnInit, OnChanges, OnDestroy {
   private readonly storage = inject(StorageService);
 
   @Input() showSettings = true;
-  @Input() copyOnUnlock = false;
   @Input() masterSecret = '';
   @Input() resetVersion = 0;
   @Output() readonly unlocked = new EventEmitter<string>();

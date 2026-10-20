@@ -10,6 +10,8 @@ Use a long, independently generated master secret or a passphrase made from rand
 
 Both manual and key-unlocked sessions lock when leaving the page. Manual entry also locks after five minutes without keyboard or pointer activity. Key-unlocked sessions have a five-minute maximum even with activity. On returning to a suspended tab, the app checks elapsed time before allowing more use.
 
+After unlocking with a physical key, click **Copy password** to copy and clear both secrets. Safari requires clipboard writes to start during a fresh user action; key verification and password generation can outlast or consume that action. The app starts a promised clipboard write before awaiting generation when the browser supports it. If copying is denied, it keeps the current secrets available and asks for a new click rather than repeating a denied write in the background. Other transient write failures get up to five attempts. Leaving the page or reaching the session timeout still locks the app after a failed copy.
+
 The existing password-generation algorithm and manual master-secret entry are unchanged. Security-key unlock is optional and supplies the same master secret to that algorithm, so enrolling a key does not change existing generated passwords.
 
 ## Optional physical security key

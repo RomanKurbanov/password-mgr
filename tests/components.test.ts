@@ -1,6 +1,6 @@
 import '@angular/compiler';
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test, TestContext } from 'node:test';
 import { Injector, runInInjectionContext, SimpleChange } from '@angular/core';
 import { AppComponent } from '../src/app/app.component';
 import { SecurityKeysComponent } from '../src/app/security-keys.component';
@@ -31,6 +31,20 @@ function environment() {
     navigator: { value: { clipboard: { writeText: async () => {} } }, configurable: true },
   });
   return events;
+}
+
+function promisedClipboard(t: TestContext, write: (items: ClipboardItem[]) => Promise<void>): void {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'ClipboardItem');
+  class FakeClipboardItem {
+    constructor(private readonly data: Record<string, Promise<Blob>>) {}
+    getType(type: string): Promise<Blob> { return this.data[type]; }
+  }
+  Object.defineProperty(globalThis, 'ClipboardItem', { value: FakeClipboardItem, configurable: true });
+  Object.assign(navigator.clipboard, { write });
+  t.after(() => {
+    if (original) Object.defineProperty(globalThis, 'ClipboardItem', original);
+    else Reflect.deleteProperty(globalThis, 'ClipboardItem');
+  });
 }
 
 function app(generator: Pick<CryptoService, 'generatePassword'>) {
@@ -649,6 +663,99 @@ test('changing accounts during unlock-and-copy never copies another account', as
   const run = component.generateAndCopy();
   component.newParam();
   pending.resolve('old account');
+  await run;
+  assert.deepEqual(copied, []);
+});
+
+test('a key unlock waits for a fresh copy click, and a denied copy retains the key session for retry', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { component, generate } = app({ generatePassword: async () => 'key password' });
+  let attempts = 0;
+  navigator.clipboard.writeText = async () => { attempts++; throw new DOMException('denied', 'NotAllowedError'); };
+  component.onKeyUnlocked('unlocked master');
+  await generate();
+  assert.equal(attempts, 0, 'unlocking must not write after the WebAuthn prompt');
+  await component.generateAndCopy();
+  assert.equal(attempts, 1, 'permission failures need another click, not timed retries');
+  assert.equal(component.copyError(), true);
+  assert.match(component.copyErrorMessage(), /Click Copy password again/);
+  assert.equal(component.masterSecret(), 'unlocked master');
+  assert.equal(component.generatedPassword(), 'key password');
+  assert.equal(component.keyUnlocked(), true);
+  navigator.clipboard.writeText = async text => { assert.equal(text, 'key password'); attempts++; };
+  await component.generateAndCopy();
+  assert.equal(attempts, 2);
+  assert.equal(component.masterSecret(), '');
+  assert.equal(component.generatedPassword(), '');
+  assert.equal(component.keyUnlocked(), false);
+  assert.equal(component.copySuccess(), true);
+  component.ngOnDestroy();
+});
+
+test('promised clipboard writing starts before asynchronous password generation completes', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const pending = deferred<string>();
+  const { component } = app({ generatePassword: () => pending.promise });
+  const copied: string[] = [];
+  let started = false;
+  promisedClipboard(t, async items => {
+    started = true;
+    copied.push(await (await items[0].getType('text/plain')).text());
+  });
+  const run = component.generateAndCopy();
+  assert.equal(started, true, 'the native write must start within the original click');
+  assert.deepEqual(copied, []);
+  assert.equal(component.masterSecret(), 'original master');
+  pending.resolve('generated asynchronously');
+  await run;
+  assert.deepEqual(copied, ['generated asynchronously']);
+  assert.equal(component.copySuccess(), true);
+  assert.equal(component.masterSecret(), '');
+  assert.equal(component.generatedPassword(), '');
+  component.ngOnDestroy();
+});
+
+test('a rejected promised clipboard write preserves the generated password for a fresh click', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { component } = app({ generatePassword: async () => 'keep for retry' });
+  let attempts = 0;
+  promisedClipboard(t, async () => { attempts++; throw new DOMException('blocked', 'NotAllowedError'); });
+  await component.generateAndCopy();
+  assert.equal(attempts, 1);
+  assert.equal(component.generatedPassword(), 'keep for retry');
+  assert.equal(component.masterSecret(), 'original master');
+  assert.equal(component.copyError(), true);
+  let copied = '';
+  navigator.clipboard.writeText = async text => { copied = text; };
+  await component.generateAndCopy();
+  assert.equal(copied, 'keep for retry');
+  assert.equal(component.masterSecret(), '');
+  component.ngOnDestroy();
+});
+
+test('locking during promised clipboard generation prevents the secret from reaching the clipboard', async t => {
+  const pending = deferred<string>();
+  const { component } = app({ generatePassword: () => pending.promise });
+  const copied: string[] = [];
+  promisedClipboard(t, async items => { copied.push(await (await items[0].getType('text/plain')).text()); });
+  const run = component.generateAndCopy();
+  component.clearMasterSecret();
+  pending.resolve('must not copy');
+  await run;
+  assert.deepEqual(copied, []);
+  assert.equal(component.masterSecret(), '');
+  assert.equal(component.generatedPassword(), '');
+  assert.equal(component.copyError(), false);
+});
+
+test('switching accounts during promised clipboard generation rejects the old account password', async t => {
+  const pending = deferred<string>();
+  const { component } = app({ generatePassword: () => pending.promise });
+  const copied: string[] = [];
+  promisedClipboard(t, async items => { copied.push(await (await items[0].getType('text/plain')).text()); });
+  const run = component.generateAndCopy();
+  component.newParam();
+  pending.resolve('old account password');
   await run;
   assert.deepEqual(copied, []);
 });

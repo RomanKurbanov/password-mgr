@@ -9,7 +9,7 @@
     </select>
     <button type="button" class="btn primary" (click)="unlock()"
       [disabled]="!supported || !!busy() || !!pendingEnrollment() || selectedKey()?.rpId !== hostname">
-      {{ busy() === 'unlock' ? 'Waiting for key…' : (copyOnUnlock ? 'Unlock & copy with key' : 'Unlock with key') }}
+      {{ busy() === 'unlock' ? 'Waiting for key…' : 'Unlock with key' }}
     </button>
   </div>
 }

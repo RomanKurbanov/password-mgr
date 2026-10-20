@@ -2,7 +2,7 @@
   <header class="app-header">
     <h1>Password Manager</h1>
     <div class="toolbar">
-      <span class="session-status">{{ masterSecret() ? 'Secret in memory' : 'Locked' }}</span>
+      <span class="session-status">{{ masterSecret() ? 'Secret in memory' : '' }}</span>
       @if (masterSecret()) { <button class="btn" (click)="clearMasterSecret()">Lock now</button> }
       <button class="btn" [attr.aria-expanded]="settingsOpen()" (click)="settingsOpen.set(!settingsOpen())">Settings</button>
       <button class="btn btn-sidebar-toggle" [attr.aria-expanded]="sidebarOpen()" (click)="sidebarOpen.set(!sidebarOpen())">Passwords</button>
@@ -11,7 +11,7 @@
   <div class="app-body">
     <aside class="sidebar" [class.sidebar-open]="sidebarOpen() || !editParams()">
       <label class="search-label" for="search">Saved passwords</label>
-      <input id="search" class="input search-input" type="search" placeholder="Search passwords…" aria-label="Search passwords" autofocus
+      <input id="search" class="input search-input" type="search" placeholder="Search" aria-label="Search" autofocus
         [ngModel]="searchQuery()" (ngModelChange)="searchQuery.set($event)" />
       <button class="btn btn-new" (click)="newParam()">+ New password</button>
       <div class="saved-list">
@@ -208,9 +208,8 @@
       <app-security-keys
         [hidden]="!settingsOpen() && (!editParams() || editing())"
         [showSettings]="settingsOpen()"
-        [copyOnUnlock]="!!editParams() && !editing() && !settingsOpen()"
         [masterSecret]="masterSecret()" [resetVersion]="securityKeyResetVersion()"
-        (unlocked)="onKeyCopyUnlocked($event)" (paramsImported)="onParamsImported($event)" (lockRequested)="clearMasterSecret()"
+        (unlocked)="onKeyUnlocked($event)" (paramsImported)="onParamsImported($event)" (lockRequested)="clearMasterSecret()"
       />
       @if (editParams() && !editing()) {
         <div>
@@ -220,9 +219,10 @@
         </div>
       }
       <div aria-live="polite">
-        @if (copySuccess()) { <p class="success-hint">Password copied. App locked.</p> }
+        @if (copySuccess()) { <p class="success-hint">Password copied. Master password cleared.</p> }
         @if (usernameCopyMessage()) { <p>{{ usernameCopyMessage() }}</p> }
-        @if (copyError()) { <p class="error-hint">Could not copy. Please try Copy password again.</p> }
+        @if (keyUnlocked() && !copyError() && !settingsOpen()) { <p>Unlocked with key. Click Copy password to copy and clear the master password.</p> }
+        @if (copyError()) { <p class="error-hint">{{ copyErrorMessage() }}</p> }
         @if (error()) { <p class="error-hint">{{ error() }}</p> }
       </div>
     </main>
