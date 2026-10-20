@@ -186,7 +186,7 @@
             [value]="masterSecret()"
             (keydown.enter)="generateAndCopy()"
             (input)="masterSecret.set($any($event.target).value); onMasterSecretChange()"
-            placeholder="Enter master secret…"
+            placeholder="Master secret"
             [attr.autocomplete]="supportsTextSecurity ? 'off' : 'new-password'"
             spellcheck="false"
           />

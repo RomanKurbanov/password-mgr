@@ -114,3 +114,4 @@ Before changing domains:
 4. Verify identical generated passwords, key unlock, and a new backup before retiring the old deployment. Local storage is not transferred automatically.
 
 No domain or hosting migration is performed by the application changes alone.
+The repository is now hardware signed
