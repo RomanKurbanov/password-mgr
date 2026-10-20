@@ -188,18 +188,18 @@ test('copy still clears the same unlocked secret when site settings change durin
   component.ngOnDestroy();
 });
 
-test('key sessions and inactive manual sessions expire in five minutes', t => {
+test('key and manual secrets expire after two minutes', t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const { component } = app({ generatePassword: async () => '' });
   component.onSecurityKeyUnlocked('original master');
-  t.mock.timers.tick(5 * 60_000 - 1);
+  t.mock.timers.tick(2 * 60_000 - 1);
   assert.equal(component.masterSecret(), 'original master');
   t.mock.timers.tick(1);
   assert.equal(component.masterSecret(), '');
   component.onSecurityKeyUnlocked('original master');
   component.masterSecret.set('manual value');
   component.onMasterSecretChange();
-  t.mock.timers.tick(5 * 60_000);
+  t.mock.timers.tick(2 * 60_000);
   assert.equal(component.masterSecret(), '');
   assert.equal(component.keyUnlocked(), false);
   component.ngOnDestroy();
@@ -544,22 +544,53 @@ test('locking during clipboard retries prevents further writes or stale feedback
   component.ngOnDestroy();
 });
 
-test('manual activity extends idle time but cannot extend key session lifetime', t => {
+test('unrelated activity does not extend manual or key secret deadlines', t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
   const { component, events } = app({ generatePassword: async () => '' });
   component.ngOnInit();
   component.onMasterSecretChange();
-  t.mock.timers.tick(4 * 60_000);
-  events.dispatchEvent(new Event('keydown'));
-  t.mock.timers.tick(4 * 60_000);
-  assert.equal(component.masterSecret(), 'original master');
   t.mock.timers.tick(60_000);
+  events.dispatchEvent(new Event('keydown'));
+  events.dispatchEvent(new Event('pointerdown'));
+  t.mock.timers.tick(59_999);
+  assert.equal(component.masterSecret(), 'original master');
+  t.mock.timers.tick(1);
   assert.equal(component.masterSecret(), '');
   component.onSecurityKeyUnlocked('key secret');
-  t.mock.timers.tick(4 * 60_000);
-  events.dispatchEvent(new Event('pointerdown'));
   t.mock.timers.tick(60_000);
+  events.dispatchEvent(new Event('pointerdown'));
+  t.mock.timers.tick(59_999);
+  assert.equal(component.masterSecret(), 'key secret');
+  t.mock.timers.tick(1);
   assert.equal(component.masterSecret(), '');
+  component.ngOnDestroy();
+});
+
+test('editing the master password restarts its two-minute deadline', t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const { component } = app({ generatePassword: async () => '' });
+  component.onMasterSecretChange();
+  t.mock.timers.tick(90_000);
+  component.masterSecret.set('edited master');
+  component.onMasterSecretChange();
+  t.mock.timers.tick(119_999);
+  assert.equal(component.masterSecret(), 'edited master');
+  t.mock.timers.tick(1);
+  assert.equal(component.masterSecret(), '');
+  component.ngOnDestroy();
+});
+
+test('emptying the master password cancels its clearing timer', t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const { component } = app({ generatePassword: async () => '' });
+  component.onMasterSecretChange();
+  t.mock.timers.tick(60_000);
+  component.masterSecret.set('');
+  component.onMasterSecretChange();
+  const clear = t.mock.method(component, 'clearMasterSecret');
+  t.mock.timers.tick(2 * 60_000);
+  assert.equal(component.masterSecret(), '');
+  assert.equal(clear.mock.calls.length, 0);
   component.ngOnDestroy();
 });
 
@@ -568,7 +599,7 @@ test('resuming after a suspended deadline locks before activity can extend it', 
   const { component, events } = app({ generatePassword: async () => '' });
   component.ngOnInit();
   component.onMasterSecretChange();
-  t.mock.timers.setTime(Date.now() + 5 * 60_000);
+  t.mock.timers.setTime(Date.now() + 2 * 60_000);
   events.dispatchEvent(new Event('focus'));
   events.dispatchEvent(new Event('keydown'));
   assert.equal(component.masterSecret(), '');

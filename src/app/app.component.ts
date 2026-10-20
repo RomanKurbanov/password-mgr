@@ -138,22 +138,15 @@ export class AppComponent implements OnInit, OnDestroy {
   private generationVersion = 0;
   private copyIntent = false;
   private secretVersion = 0;
-  private readonly lockAfterMs = 5 * 60_000;
+  private readonly lockAfterMs = 2 * 60_000;
   private lockTimer: ReturnType<typeof setTimeout> | undefined;
-  private idleDeadline = 0;
-  private keyDeadline = 0;
+  private secretDeadline = 0;
   private readonly onPageHide = (): void => this.clearMasterSecret();
   private readonly onResume = (): void => { this.checkSession(); };
-  private readonly onActivity = (): void => {
-    if (!this.checkSession() || !this.masterSecret()) return;
-    this.idleDeadline = Date.now() + this.lockAfterMs;
-    this.scheduleLock();
-  };
 
   private checkSession(): boolean {
     const now = Date.now();
-    if ((this.idleDeadline && now >= this.idleDeadline) ||
-        (this.keyDeadline && now >= this.keyDeadline)) {
+    if (this.secretDeadline && now >= this.secretDeadline) {
       this.clearMasterSecret();
       return false;
     }
@@ -162,8 +155,9 @@ export class AppComponent implements OnInit, OnDestroy {
 
   private scheduleLock(): void {
     clearTimeout(this.lockTimer);
-    const deadline = this.keyDeadline ? Math.min(this.idleDeadline, this.keyDeadline) : this.idleDeadline;
-    this.lockTimer = setTimeout(() => this.clearMasterSecret(), Math.max(0, deadline - Date.now()));
+    this.lockTimer = setTimeout(() => {
+      if (this.masterSecret()) this.clearMasterSecret();
+    }, Math.max(0, this.secretDeadline - Date.now()));
   }
 
   ngOnInit(): void {
@@ -176,8 +170,6 @@ export class AppComponent implements OnInit, OnDestroy {
     window.addEventListener('pageshow', this.onResume);
     window.addEventListener('focus', this.onResume);
     window.addEventListener('visibilitychange', this.onResume);
-    window.addEventListener('pointerdown', this.onActivity);
-    window.addEventListener('keydown', this.onActivity);
 
     this.sub.add(
       this.regenerate$.pipe(debounceTime(500)).subscribe(() => {
@@ -192,8 +184,6 @@ export class AppComponent implements OnInit, OnDestroy {
     window.removeEventListener('pageshow', this.onResume);
     window.removeEventListener('focus', this.onResume);
     window.removeEventListener('visibilitychange', this.onResume);
-    window.removeEventListener('pointerdown', this.onActivity);
-    window.removeEventListener('keydown', this.onActivity);
     this.clearMasterSecret();
   }
 
@@ -388,7 +378,7 @@ export class AppComponent implements OnInit, OnDestroy {
     this.keyUnlocked.set(true);
     this.copyError.set(false);
     this.copySuccess.set(false);
-    this.keyDeadline = this.idleDeadline = Date.now() + this.lockAfterMs;
+    this.secretDeadline = Date.now() + this.lockAfterMs;
     this.scheduleLock();
     this.triggerRegenerate();
   }
@@ -406,7 +396,7 @@ export class AppComponent implements OnInit, OnDestroy {
   private endKeySession(): void {
     clearTimeout(this.lockTimer);
     this.lockTimer = undefined;
-    this.idleDeadline = this.keyDeadline = 0;
+    this.secretDeadline = 0;
     this.keyUnlocked.set(false);
   }
 
@@ -476,7 +466,7 @@ export class AppComponent implements OnInit, OnDestroy {
     this.endKeySession();
     this.cancelSecurityKeyOperation();
     if (this.masterSecret()) {
-      this.idleDeadline = Date.now() + this.lockAfterMs;
+      this.secretDeadline = Date.now() + this.lockAfterMs;
       this.scheduleLock();
     }
     this.copySuccess.set(false);

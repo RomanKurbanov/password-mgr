@@ -8,7 +8,7 @@ Enter your master secret, then select a saved set or choose **+ New** and enter 
 
 Use a long, independently generated master secret or a passphrase made from randomly selected words.
 
-Both manual and key-unlocked sessions lock when leaving the page. Manual entry also locks after five minutes without keyboard or pointer activity. Key-unlocked sessions have a five-minute maximum even with activity. On returning to a suspended tab, the app checks elapsed time before allowing more use.
+Both manual and key-unlocked sessions lock when leaving the page. A non-empty master password clears two minutes after its last edit or security-key unlock. Editing the master-password field restarts that timer; other typing, clicking, and account changes do not. Clearing the field cancels the timer. On returning to a suspended tab, the app checks elapsed time before allowing more use.
 
 After unlocking with a physical key, click **Copy password** to copy and clear both secrets. Safari requires clipboard writes to start during a fresh user action; key verification and password generation can outlast or consume that action. The app starts a promised clipboard write before awaiting generation when the browser supports it. If copying is denied, it keeps the current secrets available and asks for a new click rather than repeating a denied write in the background. Other transient write failures get up to five attempts. Leaving the page or reaching the session timeout still locks the app after a failed copy.
 
@@ -25,7 +25,7 @@ Use a FIDO2 security key with WebAuthn PRF (`hmac-secret`) support, such as a co
 
 Between registration and **Finish setup**, the pending credential metadata stays only in this page's memory. Cancelling setup, editing or clearing the master secret, or leaving the page discards that pending state. Start registration again if you discard it. Cancelling does not remove a credential that was already created on the physical key.
 
-The browser obtains a repeatable PRF secret from the credential. HKDF-SHA-256 derives an AES-256-GCM key, which encrypts the original master secret with a fresh nonce. Only encrypted master-secret copies and public credential metadata are saved. The decrypted secret exists temporarily in memory. Copying a password clears both secrets from the app; key-unlocked sessions also lock automatically after five minutes. Use the lock/clear control to end a session sooner. Removing a key's saved record only removes its encrypted copy from this browser; it does not erase credentials on the physical key.
+The browser obtains a repeatable PRF secret from the credential. HKDF-SHA-256 derives an AES-256-GCM key, which encrypts the original master secret with a fresh nonce. Only encrypted master-secret copies and public credential metadata are saved. The decrypted secret exists temporarily in memory. Copying a password clears both secrets from the app; the master-password field also clears two minutes after its last edit or unlock. Use the lock/clear control to end a session sooner. Removing a key's saved record only removes its encrypted copy from this browser; it does not erase credentials on the physical key.
 
 Enroll a spare physical key using the **same exact master secret**. Each key has its own encrypted copy and can unlock the same generator inputs independently.
 

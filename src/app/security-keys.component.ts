@@ -147,7 +147,7 @@ export class SecurityKeysComponent implements OnInit, OnChanges, OnDestroy {
       const secret = await this.keyService.unlock(key, this.controller!.signal);
       if (operation !== this.operation) return;
       this.unlocked.emit(secret);
-      this.message.set('Unlocked. The secret clears after copying, locking, leaving this page, or five minutes.');
+      this.message.set('Unlocked. The master password clears after copying, locking, leaving this page, or two minutes after its last edit or unlock.');
     } catch (error) {
       if (operation === this.operation) this.error.set(this.errorMessage(error));
     } finally {
