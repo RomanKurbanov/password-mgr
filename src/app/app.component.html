@@ -2,19 +2,27 @@
   <header class="app-header">
     <h1>Password Manager</h1>
     <div class="toolbar">
-      <span class="session-status">{{ masterSecret() ? 'Secret in memory' : '' }}</span>
-      @if (masterSecret()) { <button class="btn" (click)="clearMasterSecret()">Lock now</button> }
-      <button class="btn" [attr.aria-expanded]="settingsOpen()" (click)="settingsOpen.set(!settingsOpen())">Settings</button>
-      <button class="btn btn-sidebar-toggle" [attr.aria-expanded]="sidebarOpen()" (click)="sidebarOpen.set(!sidebarOpen())">Passwords</button>
+      <span class="session-status" [class.has-secret]="!!masterSecret()">{{ masterSecret() ? 'Secret in memory' : '' }}</span>
+      @if (masterSecret()) { <button mat-stroked-button class="btn" (click)="clearMasterSecret()">Clear master secret</button> }
+      <button mat-stroked-button class="btn" [attr.aria-expanded]="settingsOpen()" (click)="settingsOpen.set(!settingsOpen())">Settings</button>
+      <button mat-stroked-button class="btn btn-sidebar-toggle" [attr.aria-expanded]="sidebarOpen()" (click)="sidebarOpen.set(!sidebarOpen())">Passwords</button>
     </div>
   </header>
   <div class="app-body">
     <aside class="sidebar" [class.sidebar-open]="sidebarOpen() || !editParams()">
-      <label class="search-label" for="search">Saved passwords</label>
-      <input id="search" class="input search-input" type="search" placeholder="Search" aria-label="Search" autofocus
-        [ngModel]="searchQuery()" (ngModelChange)="searchQuery.set($event)" />
-      <button class="btn btn-new" (click)="newParam()">+ New password</button>
-      <div class="saved-list">
+      <div class="sidebar-heading">
+        <label class="search-label" for="search">Passwords</label>
+        <button mat-stroked-button class="btn btn-new" (click)="newParam()">+ New</button>
+      </div>
+      <div class="search-box">
+        <mat-form-field appearance="outline" subscriptSizing="dynamic" class="control-field search-field">
+<kbd matTextSuffix>{{ searchShortcut }}</kbd>
+<input matInput #searchInput id="search"  type="search" placeholder="Find an account" aria-label="Search passwords" autofocus
+          (keydown.arrowdown)="focusAccount($event)" [ngModel]="searchQuery()" (ngModelChange)="searchQuery.set($event)" />
+</mat-form-field>
+
+      </div>
+      <div class="saved-list" #accountList (keydown)="navigateAccounts($event)">
         @for (p of filteredParams(); track p.id) {
           <button class="saved-item" [class.active]="p.id === selectedId()" [attr.aria-current]="p.id === selectedId() ? 'true' : null" (click)="selectParam(p.id)">
             <span class="saved-item-body">
@@ -24,69 +32,78 @@
           </button>
         } @empty { <p class="empty-hint">{{ searchQuery() ? 'No matching passwords' : 'No saved passwords' }}</p> }
       </div>
+      <div class="sidebar-footer">{{ filteredParams().length }} / {{ savedParams().length }} accounts</div>
     </aside>
     <main class="editor">
       @if (storageError()) {
         <div role="alert" class="error-hint"><p>{{ storageError() }}</p>
-          <button class="btn" (click)="downloadStoredSettings()">Download original settings for recovery</button>
+          <button mat-stroked-button class="btn" (click)="downloadStoredSettings()">Download original settings for recovery</button>
         </div>
       }
       @if (editParams(); as params) {
         <div class="detail-header">
-          <div><h2>{{ editing() ? (selectedId() ? 'Edit password' : 'New password') : (params.name || '(unnamed)') }}</h2>
+          <div><p class="section-label">{{ editing() ? 'Configuration' : 'Account' }}</p><h2>{{ editing() ? (selectedId() ? 'Edit password' : 'New password') : (params.name || '(unnamed)') }}</h2>
             @if (!editing()) { <p class="detail-domain">{{ params.domain }}</p> }
           </div>
-          @if (!editing()) { <button class="btn" (click)="editing.set(true)">Edit</button> }
+          @if (!editing()) { <button mat-stroked-button class="btn" (click)="editing.set(true)">Edit</button> }
         </div>
         @if (editing()) {
+        <h3 class="section-label">Account</h3>
         <!-- Name -->
         <div class="field-row">
           <label class="field-label" for="name">Name</label>
-          <input
+          <mat-form-field appearance="outline" subscriptSizing="dynamic" class="control-field">
+<input matInput
             id="name"
-            class="input"
+
             type="text"
             [(ngModel)]="params.name"
             (ngModelChange)="onParamChange()"
             placeholder="e.g. Google Login"
           />
+</mat-form-field>
         </div>
 
         <!-- Domain -->
         <div class="field-row">
           <label class="field-label" for="domain">Domain</label>
-          <input
+          <mat-form-field appearance="outline" subscriptSizing="dynamic" class="control-field">
+<input matInput
             id="domain"
-            class="input"
+
             type="text"
             [(ngModel)]="params.domain"
             (ngModelChange)="onParamChange()"
             placeholder="e.g. google.com"
             autocomplete="off"
           />
+</mat-form-field>
         </div>
 
         <!-- Username -->
         <div class="field-row">
           <label class="field-label" for="username">Username</label>
-          <input
+          <mat-form-field appearance="outline" subscriptSizing="dynamic" class="control-field">
+<input matInput
             id="username"
-            class="input"
+
             type="text"
             [(ngModel)]="params.username"
             (ngModelChange)="onParamChange()"
             placeholder="e.g. user@example.com"
             autocomplete="off"
           />
+</mat-form-field>
         </div>
 
+        <h3 class="section-label">Password generation</h3>
         <!-- Counter -->
         <div class="field-row">
           <label class="field-label">Counter</label>
           <div class="counter-group">
-            <button class="btn btn-counter" (click)="decrementCounter()" [disabled]="params.counter <= 1">−</button>
+            <button mat-stroked-button class="btn btn-counter" aria-label="Decrease counter" (click)="decrementCounter()" [disabled]="params.counter <= 1">−</button>
             <span class="counter-value">{{ params.counter }}</span>
-            <button class="btn btn-counter" (click)="incrementCounter()">+</button>
+            <button mat-stroked-button class="btn btn-counter" aria-label="Increase counter" (click)="incrementCounter()">+</button>
           </div>
         </div>
 
@@ -95,23 +112,26 @@
           <label class="field-label" for="length">Length</label>
           <div class="length-control">
             <div class="length-stepper">
-              <button class="btn btn-counter" (click)="setLength(params.length - 1)" [disabled]="params.length <= 8">−</button>
-              <input
+              <button mat-stroked-button class="btn btn-counter" aria-label="Decrease length" (click)="setLength(params.length - 1)" [disabled]="params.length <= 8">−</button>
+              <mat-form-field appearance="outline" subscriptSizing="dynamic" class="control-field length-field">
+<input matInput
                 id="length"
-                class="input length-input"
+
                 type="number"
                 [min]="8"
                 [max]="64"
                 [value]="params.length"
                 (change)="setLength(+$any($event.target).value)"
               />
-              <button class="btn btn-counter" (click)="setLength(params.length + 1)" [disabled]="params.length >= 64">+</button>
+</mat-form-field>
+              <button mat-stroked-button class="btn btn-counter" aria-label="Increase length" (click)="setLength(params.length + 1)" [disabled]="params.length >= 64">+</button>
             </div>
             <div class="length-presets">
               @for (preset of lengthPresets; track preset) {
-                <button
+                <button mat-stroked-button
                   class="btn btn-preset"
                   [class.active]="params.length === preset"
+                  [attr.aria-pressed]="params.length === preset"
                   (click)="setLength(preset)"
                 >{{ preset }}</button>
               }
@@ -123,49 +143,42 @@
         <div class="field-row charset-row">
           <label class="field-label">Charset</label>
           <div class="checkbox-group">
-            <label class="checkbox-label">
-              <input type="checkbox" [(ngModel)]="params.includeUppercase" (ngModelChange)="onParamChange()" />
-              Upper
-            </label>
-            <label class="checkbox-label">
-              <input type="checkbox" [(ngModel)]="params.includeLowercase" (ngModelChange)="onParamChange()" />
-              Lower
-            </label>
-            <label class="checkbox-label">
-              <input type="checkbox" [(ngModel)]="params.includeNumbers" (ngModelChange)="onParamChange()" />
-              Numbers
-            </label>
+            <mat-checkbox [(ngModel)]="params.includeUppercase" (ngModelChange)="onParamChange()">Upper</mat-checkbox>
+            <mat-checkbox [(ngModel)]="params.includeLowercase" (ngModelChange)="onParamChange()">Lower</mat-checkbox>
+            <mat-checkbox [(ngModel)]="params.includeNumbers" (ngModelChange)="onParamChange()">Numbers</mat-checkbox>
           </div>
         </div>
 
         <!-- Symbols -->
         <div class="field-row">
           <label class="field-label" for="symbols">Symbols</label>
-          <input
+          <mat-form-field appearance="outline" subscriptSizing="dynamic" class="control-field">
+<input matInput
             id="symbols"
-            class="input"
+
             type="text"
             [(ngModel)]="params.symbols"
             (ngModelChange)="onParamChange()"
             placeholder="e.g. !@#$%^&*()"
           />
+</mat-form-field>
         </div>
 
 
           <p class="empty-hint">Changing the domain, username, counter, or generation options changes the generated password.</p>
           <div class="action-row">
-            <button class="btn btn-save" (click)="saveParam()" [disabled]="!params.domain.trim()">Save changes</button>
-            <button class="btn" (click)="cancelEdit()">Cancel</button>
-            @if (selectedId()) { <button class="btn btn-delete" (click)="deleteParam()">Delete</button> }
+            <button mat-flat-button class="btn btn-save" (click)="saveParam()" [disabled]="!params.domain.trim()">Save changes</button>
+            <button mat-stroked-button class="btn" (click)="cancelEdit()">Cancel</button>
+            @if (selectedId()) { <button mat-stroked-button class="btn btn-delete" (click)="deleteParam()">Delete</button> }
           </div>
         } @else {
           <section class="credential-card" aria-label="Account credentials">
             <div class="credential-row"><div><span class="field-label">Username</span><p>{{ params.username || 'No username' }}</p></div>
-              @if (params.username) { <button class="btn" (click)="copyUsername()">Copy username</button> }
+              @if (params.username) { <button mat-stroked-button class="btn" matTooltip="Copy username to clipboard" (click)="copyUsername()">Copy username</button> }
             </div>
             <div class="credential-row"><div><span class="field-label">Password</span>
               <p class="password-value">{{ showPassword() && generatedPassword() ? generatedPassword() : '••••••••••••••••' }}</p></div>
-              @if (generatedPassword()) { <button class="btn" (click)="showPassword.set(!showPassword())">{{ showPassword() ? 'Hide password' : 'Show password' }}</button> }
+              @if (generatedPassword()) { <button mat-stroked-button class="btn" (click)="showPassword.set(!showPassword())">{{ showPassword() ? 'Hide password' : 'Show password' }}</button> }
             </div>
           </section>
         }
@@ -174,13 +187,15 @@
       }
       @if ((editParams() && !editing()) || settingsOpen()) {
         <section class="unlock-panel">
+          <h3 class="section-label">{{ settingsOpen() ? 'Master password & security' : 'Unlock' }}</h3>
       <!-- Master secret row -->
       <div class="master-row">
         <label class="field-label" for="masterSecret">Master password</label>
         <div class="input-group">
-          <input
+          <mat-form-field appearance="outline" subscriptSizing="dynamic" class="control-field">
+<input matInput
             id="masterSecret"
-            class="input master-input"
+
             [type]="!supportsTextSecurity && !showMasterSecret() ? 'password' : 'text'"
             [class.master-masked]="supportsTextSecurity && !showMasterSecret()"
             [value]="masterSecret()"
@@ -190,12 +205,14 @@
             [attr.autocomplete]="supportsTextSecurity ? 'off' : 'new-password'"
             spellcheck="false"
           />
-          <button
+</mat-form-field>
+          <button mat-stroked-button
             class="btn btn-icon"
             (click)="showMasterSecret.set(!showMasterSecret())"
+            [matTooltip]="showMasterSecret() ? 'Hide master password' : 'Show master password'"
             [attr.aria-label]="showMasterSecret() ? 'Hide master password' : 'Show master password'"
           >{{ showMasterSecret() ? 'Hide' : 'Show' }}</button>
-          <button class="btn btn-icon" (click)="clearMasterSecret()" aria-label="Clear master password">✕</button>
+          <button mat-stroked-button class="btn btn-icon" (click)="clearMasterSecret()" aria-label="Clear master password" matTooltip="Clear master password and lock">Clear</button>
         </div>
         @if (secretWeak()) {
           <span class="weak-secret-hint">⚠ Short master secret — use a long, independently generated secret or randomly generated passphrase.</span>
@@ -213,12 +230,12 @@
       />
       @if (editParams() && !editing()) {
         <div>
-            <button class="btn btn-save primary-copy" (click)="generateAndCopy()" [disabled]="!masterSecret() || generating() || copying()">
+            <button mat-flat-button class="btn btn-save primary-copy" (click)="generateAndCopy()" [disabled]="!masterSecret() || generating() || copying()">
               {{ copying() ? 'Copying…' : generating() ? 'Generating…' : 'Copy password' }}
             </button>
         </div>
       }
-      <div aria-live="polite">
+      <div class="feedback" aria-live="polite">
         @if (copySuccess()) { <p class="success-hint">Password copied. Master password cleared.</p> }
         @if (usernameCopyMessage()) { <p>{{ usernameCopyMessage() }}</p> }
         @if (keyUnlocked() && !copyError() && !settingsOpen()) { <p>Unlocked with key. Click Copy password to copy and clear the master password.</p> }

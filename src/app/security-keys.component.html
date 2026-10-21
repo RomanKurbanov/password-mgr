@@ -1,13 +1,15 @@
 @if (keys().length > 0) {
   <div class="unlock-row">
-    <label for="security-key-choice">Security key</label>
-    <select id="security-key-choice" class="input" [ngModel]="selectedKeyId()"
+    <label id="security-key-label">Security key</label>
+    <mat-form-field appearance="outline" subscriptSizing="dynamic" class="control-field">
+    <mat-select id="security-key-choice" aria-labelledby="security-key-label" [ngModel]="selectedKeyId()"
       (ngModelChange)="selectedKeyId.set($event)" [disabled]="!!busy() || !!pendingEnrollment()">
       @for (key of keys(); track keyId(key)) {
-        <option [value]="keyId(key)">{{ key.name }}{{ key.rpId !== hostname ? ' (' + key.rpId + ')' : '' }}</option>
+        <mat-option [value]="keyId(key)">{{ key.name }}{{ key.rpId !== hostname ? ' (' + key.rpId + ')' : '' }}</mat-option>
       }
-    </select>
-    <button type="button" class="btn primary" (click)="unlock()"
+    </mat-select>
+    </mat-form-field>
+    <button mat-stroked-button type="button" class="btn primary" (click)="unlock()"
       [disabled]="!supported || !!busy() || !!pendingEnrollment() || selectedKey()?.rpId !== hostname">
       {{ busy() === 'unlock' ? 'Waiting for key…' : 'Unlock with key' }}
     </button>
@@ -29,18 +31,20 @@
     <div class="notice">
       <p><strong>Step 1 complete: “{{ pending.name }}” is registered.</strong></p>
       <p>Click Finish setup to encrypt your master secret. Keep the key connected and complete the next browser prompt. If this step fails, retry it here.</p>
-      <button type="button" class="btn primary" (click)="finishEnrollment()"
+      <button mat-stroked-button type="button" class="btn primary" (click)="finishEnrollment()"
         [disabled]="!!busy() || !masterSecret || !!storageError()">
         {{ busy() === 'finish' ? 'Verifying encryption…' : 'Finish setup' }}
       </button>
-      <button type="button" class="btn" (click)="cancelOperation()">Cancel setup</button>
+      <button mat-stroked-button type="button" class="btn" (click)="cancelOperation()">Cancel setup</button>
     </div>
   } @else {
     <div class="enroll-row">
     <label for="security-key-name">Key name</label>
-    <input id="security-key-name" class="input" [(ngModel)]="keyName" maxlength="80"
+    <mat-form-field appearance="outline" subscriptSizing="dynamic" class="control-field">
+<input matInput id="security-key-name"  [(ngModel)]="keyName" maxlength="80"
       placeholder="e.g. Everyday key" [disabled]="!!busy()" />
-    <button type="button" class="btn" (click)="enroll()"
+</mat-form-field>
+    <button mat-stroked-button type="button" class="btn" (click)="enroll()"
       [disabled]="!supported || !!busy() || !masterSecret || !keyName.trim() || !!storageError()">
       {{ busy() === 'enroll' ? 'Registering…' : 'Register key' }}
     </button>
@@ -51,49 +55,50 @@
   @for (key of keys(); track keyId(key)) {
     <div class="key-row">
       <span>{{ key.name }} <small>{{ key.rpId }}</small></span>
-      <button type="button" class="btn" (click)="pendingRemoval.set(key)" [disabled]="!!busy() || !!pendingEnrollment()">Remove</button>
+      <button mat-stroked-button type="button" class="btn" (click)="pendingRemoval.set(key)" [disabled]="!!busy() || !!pendingEnrollment()">Remove</button>
     </div>
   }
   @if (pendingRemoval(); as key) {
     <div class="notice">
       <p>Remove “{{ key.name }}” from this browser? Keep your master secret or a backup to restore access.</p>
-      <button type="button" class="btn danger" (click)="removeKey(key)" [disabled]="!!busy() || !!pendingEnrollment()">Remove saved unlock</button>
-      <button type="button" class="btn" (click)="pendingRemoval.set(null)">Keep key</button>
+      <button mat-stroked-button type="button" class="btn danger" (click)="removeKey(key)" [disabled]="!!busy() || !!pendingEnrollment()">Remove saved unlock</button>
+      <button mat-stroked-button type="button" class="btn" (click)="pendingRemoval.set(null)">Keep key</button>
     </div>
   }
 
+  <h3 class="section-label">Backup</h3>
   <div class="backup-row">
-    <button type="button" class="btn" (click)="exportBackup()" [disabled]="!!busy() || !!pendingEnrollment() || !!storageError()">Export backup</button>
-    <button type="button" class="btn" (click)="backupFile.click()" [disabled]="!!busy() || !!pendingEnrollment() || !!storageError()">Import backup</button>
+    <button mat-stroked-button type="button" class="btn" (click)="exportBackup()" [disabled]="!!busy() || !!pendingEnrollment() || !!storageError()">Export backup</button>
+    <button mat-stroked-button type="button" class="btn" (click)="backupFile.click()" [disabled]="!!busy() || !!pendingEnrollment() || !!storageError()">Import backup</button>
     <input #backupFile type="file" accept="application/json,.json" hidden (change)="importBackup(backupFile)" />
   </div>
   <p>Backups include readable site settings and encrypted master-secret copies. Import merges entries without replacing existing ones. A key needs this backup on a new browser, at the same domain.</p>
   <p>Remembering your master secret remains a recovery option. Key unlock does not add a required second factor.</p>
 
-  <div class="diagnostics">
+  <details class="diagnostics">
+    <summary>Diagnostics</summary>
     <p><strong>Troubleshooting</strong> · Build {{ buildId }}</p>
-    <label class="diagnostics-toggle">
-      <input type="checkbox" [checked]="diagnostics.enabled()"
-        (change)="toggleDiagnostics($any($event.target).checked)" />
-      Enable temporary diagnostics
-    </label>
+    <mat-checkbox [checked]="diagnostics.enabled()"
+        (change)="toggleDiagnostics($event.checked)">Enable temporary diagnostics</mat-checkbox>
     <p>Records browser and site information, request steps, timings, and error names in this tab's memory. Excludes passwords, PINs, credential IDs, and cryptographic secrets. Nothing is sent automatically. Turning this off or reloading clears the report.</p>
     @if (diagnostics.enabled()) {
       <div class="backup-row">
-        <button type="button" class="btn" (click)="copyDiagnostics()">Copy diagnostics</button>
-        <button type="button" class="btn" (click)="diagnostics.clear(); diagnosticCopyMessage.set('')">Clear diagnostics</button>
+        <button mat-stroked-button type="button" class="btn" (click)="copyDiagnostics()">Copy diagnostics</button>
+        <button mat-stroked-button type="button" class="btn" (click)="diagnostics.clear(); diagnosticCopyMessage.set('')">Clear diagnostics</button>
       </div>
-      <textarea class="diagnostics-report" readonly rows="10" aria-label="Security-key diagnostics report"
+      <mat-form-field appearance="outline" subscriptSizing="dynamic" class="diagnostics-field">
+      <textarea matInput class="diagnostics-report" readonly rows="10" aria-label="Security-key diagnostics report"
         [value]="diagnosticReport()"></textarea>
+      </mat-form-field>
       @if (diagnosticCopyMessage()) {
         <p class="status" role="status">{{ diagnosticCopyMessage() }}</p>
       }
     }
-  </div>
+  </details>
 </details>
 
 @if (busy() && !pendingEnrollment()) {
-  <button type="button" class="btn cancel" (click)="cancelOperation()">Cancel</button>
+  <button mat-stroked-button type="button" class="btn cancel" (click)="cancelOperation()">Cancel</button>
 }
 @if (error()) {
   <p class="error" role="alert">{{ error() }}</p>

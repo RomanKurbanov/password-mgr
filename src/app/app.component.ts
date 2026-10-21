@@ -1,8 +1,15 @@
+import { MatButtonModule } from '@angular/material/button';
+import { MatCheckboxModule } from '@angular/material/checkbox';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatInputModule } from '@angular/material/input';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import {
   Component,
   OnInit,
   OnDestroy,
   ViewChild,
+  ElementRef,
+  HostListener,
   signal,
   computed,
   inject,
@@ -19,7 +26,7 @@ import { SecurityKeysComponent } from './security-keys.component';
 
 @Component({
   selector: 'app-root',
-  imports: [FormsModule, SecurityKeysComponent],
+  imports: [MatButtonModule, MatCheckboxModule, MatFormFieldModule, MatInputModule, MatTooltipModule, FormsModule, SecurityKeysComponent],
   templateUrl: './app.component.html',
   changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './app.component.scss',
@@ -30,6 +37,41 @@ export class AppComponent implements OnInit, OnDestroy {
   private readonly clipboardRetryAttempts = 5;
   private readonly clipboardRetryDelayMs = 150;
   @ViewChild(SecurityKeysComponent) private keyControls?: SecurityKeysComponent;
+
+  @ViewChild('searchInput') private searchInput?: ElementRef<HTMLInputElement>;
+  @ViewChild('accountList') private accountList?: ElementRef<HTMLElement>;
+  readonly searchShortcut = /Mac|iPhone|iPad/.test(navigator.platform ?? '') ? '⌘ K' : 'Ctrl K';
+
+  @HostListener('window:keydown', ['$event'])
+  onShortcut(event: KeyboardEvent): void {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+      event.preventDefault();
+      this.sidebarOpen.set(true);
+      // On narrow screens, wait for the sidebar to become visible before focusing.
+      requestAnimationFrame(() => {
+        this.searchInput?.nativeElement.focus();
+        this.searchInput?.nativeElement.select();
+      });
+    }
+  }
+
+  focusAccount(event: Event): void {
+    const first = this.accountList?.nativeElement.querySelector<HTMLButtonElement>('button');
+    if (first) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  navigateAccounts(event: KeyboardEvent): void {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+    const buttons = Array.from(this.accountList?.nativeElement.querySelectorAll<HTMLButtonElement>('button') ?? []);
+    const index = buttons.indexOf(event.target as HTMLButtonElement);
+    if (index < 0) return;
+    event.preventDefault();
+    if (index === 0 && event.key === 'ArrowUp') this.searchInput?.nativeElement.focus();
+    else buttons[Math.min(buttons.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1))]?.focus();
+  }
 
   readonly supportsTextSecurity = CSS.supports('-webkit-text-security', 'disc');
   readonly lengthPresets = [12, 16, 20, 24, 32];

@@ -1,3 +1,9 @@
+import { MatSelectModule } from '@angular/material/select';
+import { MatButtonModule } from '@angular/material/button';
+import { MatCheckboxModule } from '@angular/material/checkbox';
+import { MatFormFieldModule } from '@angular/material/form-field';
+import { MatInputModule } from '@angular/material/input';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import { Component, EventEmitter, Input, OnChanges, OnDestroy, OnInit, Output, SimpleChanges, computed, inject, signal, ChangeDetectionStrategy } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { PasswordParams } from './models/password-params.model';
@@ -9,7 +15,7 @@ import { APP_BUILD_ID } from './build-info';
 
 @Component({
   selector: 'app-security-keys',
-  imports: [FormsModule],
+  imports: [MatButtonModule, MatCheckboxModule, MatFormFieldModule, MatInputModule, MatTooltipModule, MatSelectModule, FormsModule],
   templateUrl: './security-keys.component.html',
   changeDetection: ChangeDetectionStrategy.Eager,
   styleUrl: './security-keys.component.scss',

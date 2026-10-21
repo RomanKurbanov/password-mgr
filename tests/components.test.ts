@@ -790,3 +790,39 @@ test('switching accounts during promised clipboard generation rejects the old ac
   await run;
   assert.deepEqual(copied, []);
 });
+
+test('account keyboard navigation moves focus without changing the selected account', () => {
+  const { component } = app({ generatePassword: async () => 'password' });
+  const focus: string[] = [];
+  const buttons = ['first', 'second'].map(name => ({ focus: () => focus.push(name) }));
+  (component as any).accountList = { nativeElement: { querySelectorAll: () => buttons, querySelector: () => buttons[0] } };
+  (component as any).searchInput = { nativeElement: { focus: () => focus.push('search') } };
+  let prevented = 0;
+  component.focusAccount({ preventDefault: () => prevented++ } as Event);
+  component.navigateAccounts({ key: 'ArrowDown', target: buttons[0], preventDefault: () => prevented++ } as unknown as KeyboardEvent);
+  component.navigateAccounts({ key: 'ArrowDown', target: buttons[1], preventDefault: () => prevented++ } as unknown as KeyboardEvent);
+  component.navigateAccounts({ key: 'ArrowUp', target: buttons[0], preventDefault: () => prevented++ } as unknown as KeyboardEvent);
+  assert.deepEqual(focus, ['first', 'second', 'second', 'search']);
+  assert.equal(prevented, 4);
+  assert.equal(component.selectedId(), null);
+});
+
+test('search shortcut opens the sidebar and focuses search; ordinary typing is untouched', t => {
+  const { component } = app({ generatePassword: async () => 'password' });
+  let focused = 0;
+  let selected = 0;
+  let prevented = 0;
+  t.mock.method(globalThis, 'setTimeout', (callback: () => void) => { callback(); return 0 as any; });
+  Object.defineProperty(globalThis, 'requestAnimationFrame', { value: (callback: () => void) => { callback(); return 0; }, configurable: true });
+  (component as any).searchInput = { nativeElement: { focus: () => focused++, select: () => selected++ } };
+  component.onShortcut({ key: 'k', ctrlKey: false, metaKey: false, preventDefault: () => prevented++ } as unknown as KeyboardEvent);
+  assert.equal(focused, 0);
+  for (const modifier of ['ctrlKey', 'metaKey']) {
+    component.onShortcut({ key: 'k', [modifier]: true, preventDefault: () => prevented++ } as unknown as KeyboardEvent);
+  }
+  assert.equal(focused, 2);
+  assert.equal(selected, 2);
+  assert.equal(prevented, 2);
+  assert.equal(component.sidebarOpen(), true);
+  delete (globalThis as any).requestAnimationFrame;
+});

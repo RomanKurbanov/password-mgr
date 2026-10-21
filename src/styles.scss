@@ -1,45 +1,93 @@
-/* ── CSS custom properties (dark theme) ─────────── */
+@use '@angular/material' as mat;
+
+html {
+  @include mat.theme((
+    color: (primary: mat.$cyan-palette, theme-type: dark),
+    typography: (plain-family: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif', brand-family: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'),
+    density: -3,
+  ), $overrides: (
+    primary: #76d6d0, on-primary: #102324,
+    surface: #101213, surface-container: #1c2224,
+    surface-container-high: #242b2e, surface-container-low: #171a1c,
+    on-surface: #eeefeb, on-surface-variant: #a1abad,
+    outline: #485155, outline-variant: #343a3e, error: #ff9292,
+  ));
+  @include mat.form-field-overrides((
+    container-height: 40px, container-vertical-padding: 8px,
+    container-text-size: 13px, container-text-line-height: 24px, container-text-tracking: 0,
+    outlined-container-shape: 4px,
+  ));
+  @include mat.button-overrides((
+    filled-container-shape: 4px, outlined-container-shape: 4px,
+    filled-container-height: 40px, outlined-container-height: 40px,
+    filled-label-text-size: 12px, outlined-label-text-size: 12px,
+    filled-label-text-tracking: 0, outlined-label-text-tracking: 0,
+    outlined-label-text-color: #eeefeb,
+  ));
+  @include mat.select-overrides((trigger-text-size: 13px, trigger-text-tracking: 0));
+  @include mat.checkbox-overrides((label-text-size: 12px));
+}
+.btn-delete, .danger {
+  @include mat.button-overrides((outlined-label-text-color: #ff9292, outlined-outline-color: #ff9292));
+}
+.primary {
+  @include mat.button-overrides((outlined-label-text-color: #76d6d0, outlined-outline-color: #76d6d0));
+}
+
 :root {
-  --bg:           #0f1117;
-  --surface:      #1a1d27;
-  --border:       #2d3044;
-  --hover:        #242738;
-  --input-bg:     #12141e;
-
-  --text:         #e2e4ef;
-  --text-muted:   #8b90a8;
-  --text-faint:   #555a78;
-
-  --accent:       #6c8ef5;
-  --accent-dark:  #5070e0;
-  --accent-faint: rgba(108, 142, 245, 0.12);
-
-  --error:        #ef4444;
+  color-scheme: dark;
+  --bg: #101213;
+  --surface: #171a1c;
+  --border: #343a3e;
+  --hover: #242b2e;
+  --input-bg: #111516;
+  --text: #eeefeb;
+  --text-muted: #a1abad;
+  --text-faint: #8d989c;
+  --accent: #76d6d0;
+  --accent-dark: #9be6df;
+  --accent-faint: #76d6d012;
+  --error: #ff9292;
+  --warning: #e6be78;
+  --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
 }
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; -webkit-font-smoothing: antialiased; }
+button, input, select, textarea { font: inherit; }
+:where(button, input, select, textarea, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.empty-hint, .field-label { color: var(--text-muted); font-size: 12px; }
+.error-hint, .error { color: var(--error); font-size: 12px; }
+.success-hint, .status { color: var(--accent); }
+kbd { font: 10px var(--mono); color: var(--text-muted); padding: 3px 5px; border: 1px solid var(--border); border-radius: 3px; }
+.section-label { margin: 8px 0 4px; color: var(--text-muted); font: 10px/1.6 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+[hidden] { display: none !important; }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
 
-/* ── Reset & base ────────────────────────────────── */
-*, *::before, *::after {
-  box-sizing: border-box;
-}
+/* Shared compact form controls. */
+.action-row { display: flex; flex-wrap: wrap; gap: 8px; border-top: 1px solid var(--border); padding-top: 18px; }
+.btn-delete { margin-left: auto; }
+.counter-group, .length-stepper, .checkbox-group { display: flex; align-items: center; gap: 8px; }
+.btn-counter { width: 40px; min-width: 40px; padding: 0; }
+.counter-value { width: 36px; text-align: center;
+  font-family: var(--mono), sans-serif; }
+.length-control { display: flex; gap: 12px; flex-wrap: wrap; }
+.length-presets { display: flex; }
+.btn-preset { min-width: 40px; padding-inline: 10px; }
+.btn-preset.active { color: var(--accent); background: var(--accent-faint); }
+.checkbox-group { flex-wrap: wrap; gap: 16px; }
 
-html, body {
-  margin: 0;
-  padding: 0;
-  height: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  font-size: 14px;
-  background: var(--bg);
-  color: var(--text);
-  -webkit-font-smoothing: antialiased;
+/* Layout only: Material owns control surfaces, typography, and states. */
+.control-field { flex: 1; min-width: 0; }
+.length-field { flex: none; width: 76px; }
+.length-field input { text-align: center; font-family: var(--mono), sans-serif; appearance: textfield; }
+.length-field input::-webkit-inner-spin-button { appearance: none; }
+.diagnostics-field { width: 100%; }
+@media (pointer: coarse) {
+  html {
+    @include mat.button-overrides((filled-container-height: 44px, outlined-container-height: 44px));
+    @include mat.form-field-overrides((container-height: 44px, container-vertical-padding: 10px));
+  }
 }
-
-::-webkit-scrollbar {
-  width: 6px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 3px;
-}
+kbd { white-space: nowrap; display: inline-block; }

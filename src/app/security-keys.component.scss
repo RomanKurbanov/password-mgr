@@ -1,24 +1,11 @@
 :host { display: block; }
 .unlock-row, .enroll-row, .backup-row, .key-row {
-  display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; margin: .65rem 0;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 0 0 14px;
 }
-label { color: var(--text-muted); font-size: .875rem; }
-.unlock-row label, .enroll-row label { width: 120px; margin-right: .25rem; }
-.input {
-  flex: 1; min-width: 130px; max-width: 340px; background: var(--input-bg);
-  color: var(--text); border: 1px solid var(--border); border-radius: 6px;
-  padding: .4rem .65rem; font: inherit;
-}
-.btn {
-  border: 1px solid var(--border); border-radius: 6px; background: var(--surface);
-  color: var(--text); padding: .4rem .8rem; font: inherit; font-size: .8rem; cursor: pointer;
-  &:hover:not(:disabled) { border-color: var(--accent); background: var(--hover); }
-  &:disabled { opacity: .4; cursor: not-allowed; }
-}
-.primary { border-color: var(--accent); color: var(--accent); }
-.danger, .error { color: var(--error); }
-.settings { border: 1px solid var(--border); border-radius: 6px; padding: .65rem .8rem; }
-summary { cursor: pointer; font-size: .875rem; }
+label { color: var(--text-muted); font-size: 12px; }
+.unlock-row label, .enroll-row label { width: 120px; flex-shrink: 0; }
+.settings { border: 1px solid var(--border); border-radius: 4px; padding: .65rem .8rem; }
+summary { cursor: pointer; font-size: 12px; }
 summary span { color: var(--text-muted); font-size: .75rem; margin-left: .5rem; }
 p { color: var(--text-muted); font-size: .8rem; line-height: 1.5; margin: .5rem 0; }
 .notice { background: var(--accent-faint); border-radius: 4px; padding: .5rem; }
@@ -28,13 +15,15 @@ small { display: block; color: var(--text-muted); }
 .status { color: var(--accent); }
 .cancel { margin-top: .5rem; }
 .diagnostics { border-top: 1px solid var(--border); margin-top: .75rem; padding-top: .5rem; }
-.diagnostics-toggle { display: flex; align-items: center; gap: .5rem; }
+.diagnostics-toggle { display: flex; align-items: center; gap: 12px; }
 .diagnostics-report {
-  display: block; width: 100%; resize: vertical; border: 1px solid var(--border);
-  background: var(--input-bg); color: var(--text); border-radius: 4px; padding: .5rem;
+  display: block; width: 100%; resize: vertical;
+  background: transparent; color: var(--text);
   font: .75rem/1.4 monospace;
 }
 @media (max-width: 600px) {
   .unlock-row label, .enroll-row label { width: 100%; }
   .input { max-width: none; min-width: 0; }
 }
+
+@media (max-width: 760px) { .unlock-row label, .enroll-row label { width: 100%; } }
